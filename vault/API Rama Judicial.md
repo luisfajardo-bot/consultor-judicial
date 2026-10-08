@@ -18,6 +18,17 @@ Usar siempre `SoloActivos=false`. Con `true`, un proceso inactivo vuelve vacío 
 
 Cada actuación trae `idRegActuacion`, `consActuacion`, `fechaActuacion`, `actuacion`, `anotacion`, `fechaRegistro`, `fechaInicial` y `fechaFinal`.
 
+## Llamada 3: detalle
+
+`GET /api/v2/Proceso/Detalle/<idProceso>` devuelve `ultimaActualizacion`, la fecha de replicación del portal. Se guarda con cada consulta en [[store]].
+
+## Lo que se aprendió probando contra el portal real
+
+- **El portal responde 403 al User-Agent por defecto de `requests`** (`python-requests/x`). `curl`, un User-Agent vacío, uno de navegador y uno descriptivo reciben 200. [[fetcher]] se identifica con un User-Agent propio y honesto.
+- **Un proceso sin actuaciones, o una página inexistente, devuelve HTTP 404 con JSON** (`"Message": "No se encontraron Actuaciones ..."`). Solo ese mensaje se acepta como "sin actuaciones". Cualquier otro 404 es falla del portal.
+- **Un radicado puede devolver varios procesos.** Se consultan todos y se unen sin duplicar por `idRegActuacion`.
+- **Paginación:** cada actuación trae `cant` con el total del proceso. Si la primera página trae menos, se piden las siguientes.
+
 ## Datos personales
 
 `sujetosProcesales` trae nombres de personas naturales. [[fetcher]] los descarta antes de que lleguen al resto del código.

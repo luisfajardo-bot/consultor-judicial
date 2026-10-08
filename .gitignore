@@ -4,3 +4,4 @@ __pycache__/
 datos/
 reportes/
 config.toml
+entrada/
