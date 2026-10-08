@@ -1,6 +1,6 @@
 import requests
 
-from consultor.fetcher import Fetcher
+from consultor.fetcher import USER_AGENT, Fetcher
 from consultor.models import ERROR, EXITOSA, FALLIDA, Radicado
 
 RAD = Radicado("11001400307720210114700")
@@ -189,3 +189,9 @@ def test_pausar_duerme_el_tiempo_configurado():
     f, _, dormidos = crear(rutas_ok())
     f.pausar()
     assert dormidos == [1.0]
+
+
+def test_la_sesion_por_defecto_se_identifica_y_no_usa_el_user_agent_de_requests():
+    f = Fetcher()
+    assert f.sesion.headers["User-Agent"] == USER_AGENT
+    assert not USER_AGENT.startswith("python-requests")

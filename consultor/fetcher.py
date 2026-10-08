@@ -6,6 +6,7 @@ import requests
 from .models import ERROR, EXITOSA, FALLIDA, Actuacion, Consulta, Radicado
 
 BASE = "https://consultaprocesos.ramajudicial.gov.co:448/api/v2"
+USER_AGENT = "ConsultorJudicial/1.0 (Gerencia Juridica; consulta de procesos propios)"
 RADICADO_RE = re.compile(r"^\d{23}$")
 
 
@@ -42,7 +43,10 @@ class Fetcher:
         timeout=30,
         dormir=time.sleep,
     ):
-        self.sesion = sesion or requests.Session()
+        if sesion is None:
+            sesion = requests.Session()
+            sesion.headers["User-Agent"] = USER_AGENT
+        self.sesion = sesion
         self.pausa = pausa
         self.reintentos = reintentos
         self.espera = espera
