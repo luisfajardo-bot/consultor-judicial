@@ -13,7 +13,7 @@ from .consola import barra
 from .fetcher import Fetcher
 from .loader import crear_fuente
 from .models import ERROR, FALLIDA, NO_VERIFICADO, Consulta, Veredicto
-from .reporter import LEYENDA, avisar, escribir_reporte, leer_decisiones
+from .reporter import LEYENDA, escribir_reporte, leer_decisiones
 from .store import Store
 
 # R5 se evalúa solo después de esta cantidad de consultas, para que dos fallos
@@ -145,46 +145,52 @@ def cargar_config(ruta) -> dict:
         return tomllib.load(f)
 
 
-def ejecutar(argv=None) -> int:
-    """0 = ciclo completo, 1 = detenido o con fallas, 2 = error inesperado, 3 = no se ejecutó (candado o límite)."""
-    p = argparse.ArgumentParser(prog="consultor")
-    p.add_argument("comando", choices=["run"])
-    p.add_argument("--config", default="config.toml")
-    p.add_argument("--solo-radicado", help="consulta un único radicado, para pruebas")
-    p.add_argument("--forzar", action="store_true", help="salta el límite entre ejecuciones (no el candado)")
-    p.add_argument("--abrir", action="store_true", help="abre el Excel al terminar")
-    args = p.parse_args(argv)
+@dataclass
+class Ejecucion:
+    codigo: int
+    mensaje: str
+    resumen: Resumen | None
 
-    cfg = cargar_config(args.config)
+
+def _registrar(texto, log):
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {texto}\n")
+
+
+def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avisar_fn=None) -> Ejecucion:
+    """Un ciclo con candado, límite entre ejecuciones y avance publicado. No imprime.
+
+    codigo: 0 = completo, 1 = detenido o con fallas, 2 = error inesperado, 3 = no se ejecutó (candado o límite).
+    """
     carpeta = Path(cfg["salida"]["carpeta_reportes"])
     log = carpeta / "avisos.log"
-    barra_activa = False
 
-    def avisar_fn(texto):
-        nonlocal barra_activa
-        if barra_activa:
-            print()
-            barra_activa = False
-        avisar(texto, log, datetime.now())
+    def aviso(texto):
+        _registrar(texto, log)
+        if avisar_fn:
+            avisar_fn(texto)
 
     minimo = cfg.get("ejecucion", {}).get("min_minutos_entre_ciclos", 30)
+    inicio = datetime.now()
     try:
         with Bloqueo(Path(cfg["salida"]["base_datos"]).parent) as bloqueo:
             store = Store(cfg["salida"]["base_datos"])
             ultimo = store.ultimo_cierre()
-            if not (args.forzar or args.solo_radicado) and ultimo:
+            if not (forzar or solo_radicado) and ultimo:
                 hasta = ultimo + timedelta(minutes=minimo)
                 ahora = datetime.now()
                 if ahora < hasta:
-                    avisar_fn(
+                    msg = (
                         f"La última consulta terminó hace {int((ahora - ultimo).total_seconds() // 60)} min "
                         f"(a las {ultimo:%H:%M}). Para no repetir consultas al portal, espera hasta las "
                         f"{hasta:%H:%M}, o pide a quien administra la herramienta que use --forzar."
                     )
-                    return 3
+                    aviso(msg)
+                    return Ejecucion(3, msg, None)
             radicados = crear_fuente(cfg["fuente"]).cargar()
-            if args.solo_radicado:
-                radicados = [r for r in radicados if r.radicado == args.solo_radicado]
+            if solo_radicado:
+                radicados = [r for r in radicados if r.radicado == solo_radicado]
             portal = cfg["portal"]
             fetcher = Fetcher(
                 pausa=portal["pausa_segundos"],
@@ -196,16 +202,11 @@ def ejecutar(argv=None) -> int:
                 reintentos_bloqueo=portal.get("reintentos_bloqueo", 3),
                 espera_bloqueo=portal.get("espera_bloqueo_segundos", 60),
             )
-            consola = sys.stdout.isatty()
-            if consola:
-                print(f"Consultando {len(radicados)} procesos en la Rama Judicial. No cierres esta ventana.")
 
-            def progreso(hecho, total, radicado):
-                nonlocal barra_activa
-                bloqueo.publicar(f"{datetime.now():%H:%M} | {hecho} de {total}")
-                if consola:
-                    print("\r" + barra(hecho, total) + f" {radicado}", end="", flush=True)
-                    barra_activa = True
+            def avance(hecho, total, radicado):
+                bloqueo.publicar(f"{inicio:%H:%M} | {hecho} de {total}")
+                if progreso:
+                    progreso(hecho, total, radicado)
 
             res = correr_ciclo(
                 radicados,
@@ -214,24 +215,63 @@ def ejecutar(argv=None) -> int:
                 carpeta,
                 cfg["salida"]["validador"],
                 portal["max_fallas_ciclo"],
-                avisar_fn,
-                progreso=progreso,
-                parcial=bool(args.solo_radicado),
+                aviso,
+                progreso=avance,
+                parcial=bool(solo_radicado),
                 min_minutos=minimo,
             )
-            if barra_activa:
-                print()
-                barra_activa = False
     except CicloEnCurso as e:
-        avisar_fn(
+        msg = (
             "Ya hay una consulta en curso"
             + (f" ({e.estado})" if e.estado else "")
             + ". No hace falta lanzarla otra vez: espera a que termine."
         )
-        return 3
+        aviso(msg)
+        return Ejecucion(3, msg, None)
     except Exception:  # CA4: un error inesperado nunca deja el ciclo parado en silencio
-        avisar_fn("El ciclo terminó con un error inesperado:\n" + traceback.format_exc())
-        return 2
-    if args.abrir and res.reporte and hasattr(os, "startfile"):
-        os.startfile(res.reporte)
-    return 0 if res.estado == "Completo" else 1
+        msg = "El ciclo terminó con un error inesperado:\n" + traceback.format_exc()
+        aviso(msg)
+        return Ejecucion(2, msg, None)
+    return Ejecucion(0 if res.estado == "Completo" else 1, "", res)
+
+
+def ejecutar(argv=None) -> int:
+    """0 = ciclo completo, 1 = detenido o con fallas, 2 = error inesperado, 3 = no se ejecutó (candado o límite)."""
+    p = argparse.ArgumentParser(prog="consultor")
+    p.add_argument("comando", choices=["run"])
+    p.add_argument("--config", default="config.toml")
+    p.add_argument("--solo-radicado", help="consulta un único radicado, para pruebas")
+    p.add_argument("--forzar", action="store_true", help="salta el límite entre ejecuciones (no el candado)")
+    p.add_argument("--abrir", action="store_true", help="abre el Excel al terminar")
+    args = p.parse_args(argv)
+
+    cfg = cargar_config(args.config)
+    consola = sys.stdout.isatty()
+    barra_activa = False
+
+    def cerrar_barra():
+        nonlocal barra_activa
+        if barra_activa:
+            print()
+            barra_activa = False
+
+    def avisar_fn(texto):
+        cerrar_barra()
+        print(texto)
+
+    def progreso(hecho, total, radicado):
+        nonlocal barra_activa
+        if not consola:
+            return
+        if hecho == 1:
+            print(f"Consultando {total} procesos en la Rama Judicial. No cierres esta ventana.")
+        print("\r" + barra(hecho, total) + f" {radicado}", end="", flush=True)
+        barra_activa = True
+
+    e = ejecutar_ciclo(
+        cfg, forzar=args.forzar, solo_radicado=args.solo_radicado, progreso=progreso, avisar_fn=avisar_fn
+    )
+    cerrar_barra()
+    if args.abrir and e.resumen and e.resumen.reporte and hasattr(os, "startfile"):
+        os.startfile(e.resumen.reporte)
+    return e.codigo

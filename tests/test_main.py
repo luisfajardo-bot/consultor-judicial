@@ -416,3 +416,41 @@ def test_ejecutar_devuelve_1_cuando_el_portal_bloquea(tmp_path, monkeypatch):
 
     monkeypatch.setattr(main_mod, "Fetcher", Bloquea)
     assert main_mod.ejecutar(args) == 1
+
+
+def test_ejecutar_ciclo_devuelve_el_resultado_sin_imprimir(tmp_path, monkeypatch, capsys):
+    args = preparar(tmp_path, monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    e = main_mod.ejecutar_ciclo(cfg)
+    assert e.codigo == 0
+    assert e.resumen.total == 1
+    assert capsys.readouterr().out == ""  # la función no imprime, devuelve
+
+
+def test_ejecutar_ciclo_rechazado_por_el_limite_devuelve_codigo_3_y_mensaje(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    assert main_mod.ejecutar_ciclo(cfg).codigo == 0
+    e = main_mod.ejecutar_ciclo(cfg)
+    assert e.codigo == 3
+    assert "espera hasta las" in e.mensaje
+    assert e.resumen is None
+
+
+def test_ejecutar_ciclo_rechazado_por_el_candado_dice_el_avance(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    with Bloqueo(tmp_path / "datos") as b:
+        b.publicar("09:00 | 12 de 44")
+        e = main_mod.ejecutar_ciclo(cfg)
+    assert e.codigo == 3 and "12 de 44" in e.mensaje
+
+
+def test_ejecutar_ciclo_publica_el_avance_en_estado_txt_mientras_corre(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    visto = []
+    main_mod.ejecutar_ciclo(cfg, progreso=lambda h, t, r: visto.append(
+        (tmp_path / "datos" / "estado.txt").read_text(encoding="utf-8")))
+    assert visto and "1 de 1" in visto[0]
+    assert not (tmp_path / "datos" / "estado.txt").exists()  # se borra al terminar
