@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS ix_actuacion_radicado_fecha
     ON actuacion(radicado, fecha_actuacion DESC, id_reg_actuacion DESC);
 CREATE TABLE IF NOT EXISTS ciclo (
     id INTEGER PRIMARY KEY AUTOINCREMENT, inicio TEXT NOT NULL, fin TEXT,
-    estado TEXT NOT NULL);
+    estado TEXT NOT NULL, parcial INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS consulta (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ciclo_id INTEGER NOT NULL,
     radicado TEXT NOT NULL, hora TEXT NOT NULL, estado TEXT NOT NULL,
@@ -81,19 +81,23 @@ class Store:
         self.con = sqlite3.connect(str(ruta))
         self.con.row_factory = sqlite3.Row
         self.con.executescript(ESQUEMA)
+        if "parcial" not in {f["name"] for f in self.con.execute("PRAGMA table_info(ciclo)")}:
+            with self.con:
+                self.con.execute("ALTER TABLE ciclo ADD COLUMN parcial INTEGER NOT NULL DEFAULT 0")
 
     # ciclos
-    def iniciar_ciclo(self, ahora: datetime) -> int:
+    def iniciar_ciclo(self, ahora: datetime, parcial: bool = False) -> int:
         """Continúa el ciclo abierto del mismo día si existe (reanudación)."""
         fila = self.con.execute(
-            "SELECT id FROM ciclo WHERE estado = 'En curso' AND substr(inicio, 1, 10) = ?",
-            (ahora.date().isoformat(),),
+            "SELECT id FROM ciclo WHERE estado = 'En curso' AND substr(inicio, 1, 10) = ? AND parcial = ?",
+            (ahora.date().isoformat(), int(parcial)),
         ).fetchone()
         if fila:
             return fila["id"]
         with self.con:
             cur = self.con.execute(
-                "INSERT INTO ciclo (inicio, estado) VALUES (?, 'En curso')", (_iso(ahora),)
+                "INSERT INTO ciclo (inicio, estado, parcial) VALUES (?, 'En curso', ?)",
+                (_iso(ahora), int(parcial)),
             )
         return cur.lastrowid
 
@@ -106,6 +110,10 @@ class Store:
                 (_iso(ahora), ahora.date().isoformat()),
             )
         return cur.rowcount
+
+    def ultimo_cierre(self) -> datetime | None:
+        f = self.con.execute("SELECT MAX(fin) AS fin FROM ciclo WHERE fin IS NOT NULL AND parcial = 0").fetchone()
+        return datetime.fromisoformat(f["fin"]) if f["fin"] else None
 
     def cerrar_ciclo(self, ciclo_id: int, estado: str, ahora: datetime) -> None:
         with self.con:

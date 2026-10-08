@@ -206,3 +206,33 @@ def test_una_base_con_el_esquema_viejo_se_migra_al_abrirla(tmp_path):
     nombres = {r[0] for r in s.con.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
     assert "ix_actuacion_radicado_fecha" in nombres
     assert "ix_actuacion_radicado" not in nombres
+
+
+def test_ultimo_cierre_ignora_ciclos_parciales_y_abiertos(store):
+    assert store.ultimo_cierre() is None
+    parcial = store.iniciar_ciclo(AHORA, parcial=True)
+    store.cerrar_ciclo(parcial, "Completo", AHORA + timedelta(minutes=1))
+    assert store.ultimo_cierre() is None
+    completo = store.iniciar_ciclo(AHORA)
+    assert store.ultimo_cierre() is None  # sigue En curso
+    store.cerrar_ciclo(completo, "Completo", AHORA + timedelta(minutes=5))
+    assert store.ultimo_cierre() == AHORA + timedelta(minutes=5)
+
+
+def test_un_ciclo_parcial_abierto_no_se_reanuda_como_completo(store):
+    parcial = store.iniciar_ciclo(AHORA, parcial=True)
+    assert store.iniciar_ciclo(AHORA) != parcial
+    assert store.iniciar_ciclo(AHORA, parcial=True) == parcial
+
+
+def test_base_sin_columna_parcial_se_migra(tmp_path):
+    import sqlite3
+
+    ruta = tmp_path / "vieja.db"
+    con = sqlite3.connect(ruta)
+    con.executescript("CREATE TABLE ciclo (id INTEGER PRIMARY KEY AUTOINCREMENT, inicio TEXT NOT NULL, fin TEXT, estado TEXT NOT NULL);")
+    con.execute("INSERT INTO ciclo (inicio, fin, estado) VALUES ('2026-10-01T07:00:00', '2026-10-01T07:05:00', 'Completo')")
+    con.commit()
+    con.close()
+    s = Store(ruta)
+    assert s.ultimo_cierre() == datetime(2026, 10, 1, 7, 5, 0)
