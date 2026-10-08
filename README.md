@@ -41,6 +41,17 @@ Doble clic en `scripts\ejecutar_ahora.bat`. Se ve una barra de avance con el rad
 - Si la última consulta terminó hace menos de 30 minutos, el programa lo dice y no hace nada, para no repetir consultas al portal. El límite se cambia en `config.toml`, sección `[ejecucion]`, con `min_minutos_entre_ciclos` (0 lo desactiva). Quien administra la herramienta puede saltarlo con `--forzar`.
 - Código de salida 3: no se ejecutó por candado o por el límite. Los demás: 0 completo, 1 detenido o con fallas, 2 error inesperado.
 
+## Pantalla
+
+Doble clic en `scripts\abrir_panel.bat`. Se abre una ventana que muestra:
+
+- Una barra de progreso con el radicado hecho de total, mientras hay una consulta en curso.
+- El resumen de la última consulta: cuántos radicados se consultaron, cuántos posibles novedades hay y cuántas alertas faltan por validar.
+- El botón **Consultar ahora**, que lanza una consulta con las mismas reglas de siempre.
+- El botón **Abrir último reporte**, que abre el Excel más reciente.
+
+Si ya hay otra consulta corriendo (por ejemplo la programada de las 9:00), el botón **Consultar ahora** queda desactivado y la barra muestra su avance. Cuando aparece "Sin avance hace N min", casi siempre es el portal pidiendo esperar: no hay que hacer nada, la consulta sigue sola. La ventana no envía datos a ningún sitio: solo lee los archivos de esta carpeta.
+
 ## Si la API cambia
 
 La Rama Judicial no documenta su API y puede cambiarla sin aviso. Si pasa, la herramienta muestra el mensaje "ALERTA: la API de la Rama Judicial posiblemente cambió" y el ciclo termina como "Completo con alerta" o "Detenido: posible cambio en la API".
