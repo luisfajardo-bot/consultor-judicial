@@ -35,6 +35,9 @@ def correr_ciclo(
     for alerta_id, decision, usuario in leer_decisiones(carpeta_reportes, avisar_fn):
         store.registrar_decision(alerta_id, decision, usuario or validador, ahora())
 
+    interrumpidos = store.cerrar_interrumpidos(ahora())
+    if interrumpidos:
+        avisar_fn(f"{interrumpidos} ciclo(s) anterior(es) quedaron interrumpido(s). Sus alertas pendientes siguen en el reporte.")
     ciclo_id = store.iniciar_ciclo(ahora())
     consultados = fallas = 0
     detenido = False

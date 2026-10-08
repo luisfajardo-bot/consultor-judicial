@@ -50,6 +50,20 @@ FROM alerta a JOIN actuacion t ON t.id_reg_actuacion = a.id_reg_actuacion
 WHERE a.ciclo_id = ? ORDER BY a.id
 """
 
+PENDIENTES_SQL = """
+SELECT a.id, a.radicado, a.ciclo_id, a.anterior, a.estado,
+       t.fecha_actuacion, t.actuacion, t.anotacion,
+       r.empresa AS empresa,
+       COALESCE(NULLIF(c.despacho, ''), r.despacho, '') AS despacho,
+       c.hora AS hora
+FROM alerta a
+JOIN actuacion t ON t.id_reg_actuacion = a.id_reg_actuacion
+JOIN radicado r ON r.radicado = a.radicado
+LEFT JOIN consulta c ON c.ciclo_id = a.ciclo_id AND c.radicado = a.radicado
+WHERE a.estado = 'Pendiente' AND a.ciclo_id <> ?
+ORDER BY a.id
+"""
+
 
 def _iso(momento: datetime) -> str:
     return momento.isoformat(timespec="seconds")
@@ -77,6 +91,16 @@ class Store:
                 "INSERT INTO ciclo (inicio, estado) VALUES (?, 'En curso')", (_iso(ahora),)
             )
         return cur.lastrowid
+
+    def cerrar_interrumpidos(self, ahora: datetime) -> int:
+        """Marca Interrumpido los ciclos abiertos de días anteriores."""
+        with self.con:
+            cur = self.con.execute(
+                "UPDATE ciclo SET estado = 'Interrumpido', fin = ? "
+                "WHERE estado = 'En curso' AND substr(inicio, 1, 10) <> ?",
+                (_iso(ahora), ahora.date().isoformat()),
+            )
+        return cur.rowcount
 
     def cerrar_ciclo(self, ciclo_id: int, estado: str, ahora: datetime) -> None:
         with self.con:
@@ -262,4 +286,24 @@ class Store:
                     )
             else:
                 filas.append(base)
+        for a in self.con.execute(PENDIENTES_SQL, (ciclo_id,)):
+            filas.append(
+                {
+                    "alerta_id": a["id"],
+                    "empresa": a["empresa"] or "",
+                    "radicado": a["radicado"],
+                    "despacho": a["despacho"] or "",
+                    "estado_consulta": "Exitosa",
+                    "resultado": POSIBLE_NOVEDAD,
+                    "anterior": a["anterior"] or "",
+                    "fecha_detectada": a["fecha_actuacion"],
+                    "detectada": a["actuacion"],
+                    "anotacion": a["anotacion"] or "",
+                    "hora": a["hora"] or "",
+                    "motivo": f"alerta pendiente del ciclo {a['ciclo_id']}",
+                    "decision": a["estado"],
+                    "validada_por": "",
+                    "validada_en": "",
+                }
+            )
         return filas

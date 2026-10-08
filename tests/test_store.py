@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -123,3 +123,34 @@ def test_ultima_actuacion_devuelve_la_mas_reciente(store):
     )
     assert store.ultima_actuacion(R.radicado) == "2026-06-01: Memorial"
     assert store.ultima_actuacion("00000000000000000000000") == ""
+
+
+def test_alerta_pendiente_de_otro_ciclo_aparece_en_el_reporte_siguiente(store):
+    c2 = _con_novedad(store)            # alerta Pendiente nacida en el ciclo 2
+    store.cerrar_ciclo(c2, "Completo", AHORA)
+    c3 = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(c3, R.radicado, ok(act(2), act(1)), Veredicto(SIN_CAMBIO), "", AHORA)
+    filas = store.filas_reporte(c3)
+    pendientes = [f for f in filas if f["alerta_id"]]
+    assert len(pendientes) == 1
+    assert pendientes[0]["resultado"] == POSIBLE_NOVEDAD
+    assert pendientes[0]["decision"] == PENDIENTE
+    assert "ciclo" in pendientes[0]["motivo"]
+
+
+def test_alerta_ya_decidida_no_reaparece(store):
+    c2 = _con_novedad(store)
+    alerta_id = store.filas_reporte(c2)[0]["alerta_id"]
+    store.registrar_decision(alerta_id, DESCARTADA, "Alisson", AHORA)
+    store.cerrar_ciclo(c2, "Completo", AHORA)
+    c3 = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(c3, R.radicado, ok(act(2), act(1)), Veredicto(SIN_CAMBIO), "", AHORA)
+    assert [f for f in store.filas_reporte(c3) if f["alerta_id"]] == []
+
+
+def test_ciclos_abiertos_de_dias_anteriores_se_marcan_interrumpidos(store):
+    viejo = store.iniciar_ciclo(AHORA)
+    manana = AHORA + timedelta(days=1)
+    assert store.cerrar_interrumpidos(manana) == 1
+    assert store.cerrar_interrumpidos(manana) == 0
+    assert store.iniciar_ciclo(manana) != viejo

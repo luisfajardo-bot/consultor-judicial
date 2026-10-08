@@ -142,3 +142,25 @@ def test_si_falla_el_reporte_el_ciclo_queda_abierto_y_se_reanuda_sin_reconsultar
     assert res.novedades == 1
     enc, filas = hoja_alertas(res.reporte)
     assert filas[0][enc.index("Resultado")] == "POSIBLE NOVEDAD"
+
+
+def test_ciclo_interrumpido_de_otro_dia_se_avisa_y_su_alerta_sigue_visible(tmp_path, monkeypatch):
+    store, reloj, avisos = Store(":memory:"), Reloj(), []
+    f = FetcherFalso({R1.radicado: ok(act(1))})
+    correr(tmp_path, [R1], f, store, reloj, avisos)
+    reloj.avanzar()
+    f.respuestas = {R1.radicado: ok(act(2, texto="Auto"), act(1))}
+
+    def falla(*a, **k):
+        raise RuntimeError("se cayó la máquina")
+
+    monkeypatch.undo()
+    monkeypatch.setattr(main_mod, "escribir_reporte", falla)
+    with pytest.raises(RuntimeError):
+        correr(tmp_path, [R1], f, store, reloj, avisos)
+    monkeypatch.undo()
+    reloj.avanzar()
+    res = correr(tmp_path, [R1], f, store, reloj, avisos)
+    assert any("interrumpido" in a.lower() for a in avisos)
+    enc, filas = hoja_alertas(res.reporte)
+    assert [x[enc.index("Actuación detectada")] for x in filas] == ["Auto"]
