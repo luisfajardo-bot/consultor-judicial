@@ -22,4 +22,10 @@
 5. **Una sola persona validadora** y un solo responsable técnico. El seguimiento manual no se suspende.
 6. **Calendario.** La construcción termina el 9-oct y el piloto empieza el 19-oct. El alcance de esta entrega se acuerda con la coordinación.
 
+## Limitaciones conocidas
+
+- Una decisión corregida en el Excel se ignora: cuenta solo la primera registrada para cada alerta.
+- No se deben lanzar dos ciclos a la vez.
+- Las alertas pendientes de ciclos anteriores reaparecen en cada reporte hasta que Alisson las decide.
+
 Contexto técnico en [[API Rama Judicial]] y [[Arquitectura]].
