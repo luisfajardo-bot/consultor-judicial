@@ -111,14 +111,14 @@ def test_siempre_pide_solo_activos_false():
     assert params["numero"] == RAD.radicado
 
 
-def test_busqueda_vacia_es_sin_resultados_y_no_es_falla_del_portal():
+def test_busqueda_vacia_es_sin_resultados_y_cuenta_para_r5():
     rutas = rutas_ok()
     rutas["NumeroRadicacion"] = RespuestaFalsa(200, {"procesos": []})
     f, _, _ = crear(rutas)
     c = f.consultar(RAD)
     assert c.estado == FALLIDA
     assert c.motivo == "sin resultados"
-    assert c.falla_portal is False
+    assert c.falla_portal is True
 
 
 def test_radicado_invalido_no_llama_al_portal():

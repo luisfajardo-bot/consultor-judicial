@@ -35,7 +35,7 @@ class Actuacion:
 
 @dataclass(frozen=True)
 class Consulta:
-    """Lo que devolvió el portal para un radicado. falla_portal cuenta para R5."""
+    """Lo que devolvió el portal para un radicado. falla_portal cuenta para R5 (el portal falló o no devolvió el proceso)."""
 
     estado: str
     motivo: str = ""

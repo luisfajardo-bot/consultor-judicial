@@ -126,7 +126,7 @@ class Fetcher:
             )
             procesos = (datos or {}).get("procesos") or []
             if estado == 404 or not procesos:
-                return Consulta(FALLIDA, motivo="sin resultados")
+                return Consulta(FALLIDA, motivo="sin resultados", falla_portal=True)
             primero = procesos[0]
             id_proceso = primero["idProceso"]
             vistas: dict[int, Actuacion] = {}

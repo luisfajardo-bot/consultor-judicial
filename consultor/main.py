@@ -74,7 +74,17 @@ def correr_ciclo(
         elif i < ultimo:
             fetcher.pausar()
 
-    estado = "Detenido: fuente no disponible" if detenido else "Completo"
+    fuente_caida = consultados > 0 and fallas / consultados > max_fallas
+    if detenido:
+        estado = "Detenido: fuente no disponible"
+    elif fuente_caida:
+        estado = "Completo con fallas de la fuente"
+        avisar_fn(
+            f"Fuente no disponible: fallaron {fallas} de {consultados} consultas. "
+            "Activar consulta manual."
+        )
+    else:
+        estado = "Completo"
     res = store.resumen(ciclo_id)
     ruta = escribir_reporte(
         store.filas_reporte(ciclo_id), {**res, "estado": estado}, carpeta_reportes, ciclo_id, ahora()

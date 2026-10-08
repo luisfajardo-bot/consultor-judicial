@@ -164,3 +164,13 @@ def test_ciclo_interrumpido_de_otro_dia_se_avisa_y_su_alerta_sigue_visible(tmp_p
     assert any("interrumpido" in a.lower() for a in avisos)
     enc, filas = hoja_alertas(res.reporte)
     assert [x[enc.index("Actuación detectada")] for x in filas] == ["Auto"]
+
+
+def test_portal_caido_con_pocos_radicados_no_cierra_como_completo(tmp_path):
+    radicados = [Radicado(f"{i:023d}") for i in range(1, 4)]
+    caida = Consulta(FALLIDA, motivo="HTTP 503", falla_portal=True)
+    f = FetcherFalso({r.radicado: caida for r in radicados})
+    avisos = []
+    res = correr(tmp_path, radicados, f, Store(":memory:"), Reloj(), avisos)
+    assert res.estado == "Completo con fallas de la fuente"
+    assert any("Fuente no disponible" in a for a in avisos)
