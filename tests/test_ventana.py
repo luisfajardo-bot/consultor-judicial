@@ -1,22 +1,32 @@
-import tkinter as tk
-
 import pytest
 
-import consultor.main as main_mod
-from consultor.bloqueo import Bloqueo
-from consultor.ventana import Ventana
-from tests.test_main import preparar
+tk = pytest.importorskip("tkinter")
+
+import consultor.main as main_mod  # noqa: E402
+from consultor.bloqueo import Bloqueo  # noqa: E402
+from consultor.ventana import Ventana  # noqa: E402
+from tests.test_main import preparar  # noqa: E402
 
 
-@pytest.fixture
-def raiz():
+@pytest.fixture(scope="session")
+def _tk_unico():
+    # Crear y destruir varios Tk() en un mismo proceso falla de forma intermitente en Windows.
+    # Se crea uno para toda la sesión de pruebas, como hace la aplicación real.
     try:
         r = tk.Tk()
-    except tk.TclError:
-        pytest.skip("sin entorno gráfico")
+    except tk.TclError as e:
+        pytest.skip(f"sin entorno gráfico: {e}")
     r.withdraw()
     yield r
     r.destroy()
+
+
+@pytest.fixture
+def raiz(_tk_unico):
+    ventana = tk.Toplevel(_tk_unico)
+    ventana.withdraw()
+    yield ventana
+    ventana.destroy()
 
 
 def _cfg(tmp_path, monkeypatch):
