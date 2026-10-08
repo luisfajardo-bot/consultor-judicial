@@ -380,8 +380,8 @@ def test_ejecutar_usa_los_valores_por_defecto_del_ritmo_y_del_bloqueo(tmp_path, 
     assert main_mod.ejecutar(args) == 0
     assert recibido["pausa_peticiones"] == 1.5
     assert recibido["consultar_detalle"] is False
-    assert recibido["reintentos_bloqueo"] == 2
-    assert recibido["espera_bloqueo"] == 30
+    assert recibido["reintentos_bloqueo"] == 3
+    assert recibido["espera_bloqueo"] == 60
 
 
 def test_ejecutar_pasa_el_ritmo_y_el_bloqueo_de_la_configuracion(tmp_path, monkeypatch):
