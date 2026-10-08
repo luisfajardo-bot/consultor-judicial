@@ -26,12 +26,18 @@ class Resumen:
     fallidas: int
     novedades: int
     estado: str
-    reporte: Path
+    reporte: Path | None
 
 
 def correr_ciclo(
     radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now
 ) -> Resumen:
+    if not radicados:
+        avisar_fn(
+            "La lista de radicados está vacía. No se consultó nada: "
+            "revisar la fuente y los filtros de estado."
+        )
+        return Resumen(0, 0, 0, 0, 0, "Lista vacía", None)
     for alerta_id, decision, usuario in leer_decisiones(carpeta_reportes, avisar_fn):
         store.registrar_decision(alerta_id, decision, usuario or validador, ahora())
 

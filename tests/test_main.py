@@ -174,3 +174,11 @@ def test_portal_caido_con_pocos_radicados_no_cierra_como_completo(tmp_path):
     res = correr(tmp_path, radicados, f, Store(":memory:"), Reloj(), avisos)
     assert res.estado == "Completo con fallas de la fuente"
     assert any("Fuente no disponible" in a for a in avisos)
+
+
+def test_lista_vacia_avisa_y_no_es_completo(tmp_path):
+    avisos = []
+    res = correr(tmp_path, [], FetcherFalso({}), Store(":memory:"), Reloj(), avisos)
+    assert res.estado == "Lista vacía"
+    assert res.reporte is None
+    assert any("vacía" in a for a in avisos)
