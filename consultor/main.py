@@ -20,6 +20,7 @@ from .store import Store
 # seguidos al inicio no detengan un ciclo de 44 radicados.
 MIN_MUESTRA = 10
 MOTIVO_DETENIDO = "ciclo detenido: fuente no disponible"
+ESTADO_PAUSADO = "Pausado: el portal bloqueó las consultas"
 
 
 @dataclass
@@ -31,10 +32,11 @@ class Resumen:
     novedades: int
     estado: str
     reporte: Path | None
+    pendientes: int = 0
 
 
 def correr_ciclo(
-    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False
+    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30
 ) -> Resumen:
     if not radicados:
         avisar_fn(
@@ -50,7 +52,7 @@ def correr_ciclo(
         avisar_fn(f"{interrumpidos} ciclo(s) anterior(es) quedaron interrumpido(s). Sus alertas pendientes siguen en el reporte.")
     ciclo_id = store.iniciar_ciclo(ahora(), parcial)
     consultados = fallas = cambios_api = 0
-    detenido = False
+    detenido = bloqueado = False
     ultimo = len(radicados) - 1
     store.registrar_radicados(radicados)
     for i, r in enumerate(radicados):
@@ -67,6 +69,16 @@ def correr_ciclo(
             )
         else:
             consulta = fetcher.consultar(r)
+            if consulta.bloqueo:  # no se registra: se reintenta al reanudar
+                bloqueado = True
+                pendientes = store.pendientes(ciclo_id, len(radicados))
+                avisar_fn(
+                    "ALERTA: el portal bloqueó las consultas (HTTP 403 o 429) después de "
+                    f"{len(radicados) - pendientes} radicados. Quedan {pendientes} sin consultar. "
+                    "La próxima ejecución continuará desde ahí; "
+                    f"espere al menos {min_minutos} minutos."
+                )
+                break
             veredicto = comparar(
                 consulta, store.ids_conocidos(r.radicado), store.tiene_referencia(r.radicado)
             )
@@ -94,7 +106,9 @@ def correr_ciclo(
             "consultas devolvieron una respuesta con una forma inesperada. "
             "Revisar la herramienta y usar la consulta manual mientras tanto."
         )
-    if detenido and cambios_api:
+    if bloqueado:
+        estado = ESTADO_PAUSADO
+    elif detenido and cambios_api:
         estado = "Detenido: posible cambio en la API"
     elif detenido:
         estado = "Detenido: fuente no disponible"
@@ -109,8 +123,13 @@ def correr_ciclo(
     else:
         estado = "Completo"
     res = store.resumen(ciclo_id)
+    pendientes = store.pendientes(ciclo_id, len(radicados)) if bloqueado else 0
     ruta = escribir_reporte(
-        store.filas_reporte(ciclo_id), {**res, "estado": estado}, carpeta_reportes, ciclo_id, ahora()
+        store.filas_reporte(ciclo_id),
+        {**res, "estado": estado, "pendientes": pendientes},
+        carpeta_reportes,
+        ciclo_id,
+        ahora(),
     )
     store.cerrar_ciclo(ciclo_id, estado, ahora())
     avisar_fn(
@@ -118,7 +137,7 @@ def correr_ciclo(
         f"{res['fallidas']} fallidos, {res['novedades']} posibles novedades. "
         f"Reporte: {ruta}. {LEYENDA}"
     )
-    return Resumen(ciclo_id, res["total"], res["exitosas"], res["fallidas"], res["novedades"], estado, ruta)
+    return Resumen(ciclo_id, res["total"], res["exitosas"], res["fallidas"], res["novedades"], estado, ruta, pendientes)
 
 
 def cargar_config(ruta) -> dict:
@@ -194,6 +213,7 @@ def ejecutar(argv=None) -> int:
                 avisar_fn,
                 progreso=progreso,
                 parcial=bool(args.solo_radicado),
+                min_minutos=minimo,
             )
             if barra_activa:
                 print()

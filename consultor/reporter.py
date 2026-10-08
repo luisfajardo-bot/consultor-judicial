@@ -80,6 +80,7 @@ def escribir_reporte(filas, resumen: dict, carpeta, ciclo_id: int, ahora: dateti
         ("Fallidos", resumen["fallidas"]),
         ("Posibles novedades", resumen["novedades"]),
         ("Estado del ciclo", resumen["estado"]),
+        *([("Pendientes por consultar", resumen["pendientes"])] if resumen.get("pendientes", 0) > 0 else []),
         ("", ""),
         ("Aviso", LEYENDA),
     ]:

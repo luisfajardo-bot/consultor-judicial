@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 from openpyxl import Workbook, load_workbook
 
@@ -285,3 +287,71 @@ def test_solo_radicado_no_cuenta_para_el_limite(tmp_path, monkeypatch):
     args = preparar(tmp_path, monkeypatch)
     assert main_mod.ejecutar(args + ["--solo-radicado", R1.radicado]) == 0
     assert main_mod.ejecutar(args) == 0  # no fue rechazado
+
+
+ESTADO_PAUSADO = "Pausado: el portal bloqueó las consultas"
+BLOQUEO = Consulta(FALLIDA, motivo="HTTP 403: el portal bloqueó las consultas", falla_portal=True, bloqueo=True)
+
+
+def cinco():
+    return [Radicado(f"{i:023d}") for i in range(1, 6)]
+
+
+def con_bloqueo_en_el_tercero(rs):
+    resp = {r.radicado: ok(act(1)) for r in rs}
+    resp[rs[2].radicado] = BLOQUEO
+    resp[rs[3].radicado] = RuntimeError("no debe consultarse")
+    resp[rs[4].radicado] = RuntimeError("no debe consultarse")
+    return FetcherFalso(resp)
+
+
+def test_un_bloqueo_detiene_el_ciclo_avisa_y_deja_pendientes(tmp_path):
+    rs, avisos = cinco(), []
+    f = con_bloqueo_en_el_tercero(rs)
+    res = correr(tmp_path, rs, f, Store(":memory:"), Reloj(), avisos)
+    assert len(f.llamadas) == 3
+    assert res.estado == ESTADO_PAUSADO
+    assert res.pendientes == 3
+    assert res.total == 2
+    alerta = [a for a in avisos if "bloqueó" in a]
+    assert len(alerta) == 1 and "Quedan 3" in alerta[0]
+    assert alerta[0] == (
+        "ALERTA: el portal bloqueó las consultas (HTTP 403 o 429) después de 2 radicados. "
+        "Quedan 3 sin consultar. La próxima ejecución continuará desde ahí; espere al menos 30 minutos."
+    )
+    assert not any("Fuente no disponible" in a for a in avisos)
+
+
+def test_el_minimo_de_minutos_se_incluye_en_el_aviso(tmp_path):
+    rs, avisos = cinco(), []
+    correr_ciclo(
+        rs, con_bloqueo_en_el_tercero(rs), Store(":memory:"), tmp_path, "A", 0.5, avisos.append, Reloj(), min_minutos=45
+    )
+    assert any("al menos 45 minutos" in a for a in avisos)
+
+
+def test_tras_un_bloqueo_se_reanuda_solo_con_los_pendientes(tmp_path):
+    rs, store, reloj = cinco(), Store(":memory:"), Reloj()
+    r1 = correr(tmp_path, rs, con_bloqueo_en_el_tercero(rs), store, reloj)
+    assert store.ultimo_cierre() is not None  # el límite entre ejecuciones actúa de enfriamiento
+    reloj.actual += timedelta(minutes=35)
+    f2 = FetcherFalso({r.radicado: ok(act(1)) for r in rs[2:]})
+    r2 = correr(tmp_path, rs, f2, store, reloj)
+    assert f2.llamadas == [r.radicado for r in rs[2:]]
+    assert r2.ciclo_id == r1.ciclo_id
+    assert r2.estado == "Completo" and r2.total == 5 and r2.pendientes == 0
+
+
+def test_el_reporte_del_bloqueo_trae_los_pendientes(tmp_path):
+    rs = cinco()
+    res = correr(tmp_path, rs, con_bloqueo_en_el_tercero(rs), Store(":memory:"), Reloj())
+    assert res.reporte.exists()
+    resumen = {f[0]: f[1] for f in load_workbook(res.reporte)["Resumen"].iter_rows(values_only=True)}
+    assert resumen["Pendientes por consultar"] == 3
+    assert resumen["Estado del ciclo"] == ESTADO_PAUSADO
+
+
+def test_un_ciclo_normal_no_muestra_pendientes_en_el_reporte(tmp_path):
+    res = correr(tmp_path, [R1], FetcherFalso({R1.radicado: ok(act(1))}), Store(":memory:"), Reloj())
+    resumen = {f[0] for f in load_workbook(res.reporte)["Resumen"].iter_rows(values_only=True)}
+    assert "Pendientes por consultar" not in resumen
