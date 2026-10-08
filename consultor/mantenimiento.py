@@ -1,5 +1,6 @@
 import re
 import shutil
+import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -66,3 +67,53 @@ def borrar_archivo_antiguo(carpeta, hoy: date, dias: int) -> list[Path]:
             except OSError:
                 pass
     return borrados
+
+
+PATRON_RESPALDO = re.compile(r"consultor_(\d{4})-(\d{2})-(\d{2})\.db")
+
+
+def _integridad(ruta: Path) -> str:
+    con = sqlite3.connect(str(ruta))
+    try:
+        return con.execute("PRAGMA integrity_check").fetchone()[0]
+    finally:
+        con.close()
+
+
+def _fecha_respaldo(ruta: Path):
+    m = PATRON_RESPALDO.fullmatch(ruta.name)
+    try:
+        return date(int(m[1]), int(m[2]), int(m[3])) if m else None
+    except ValueError:
+        return None
+
+
+def respaldar_base(con, carpeta_respaldo, hoy: date, cada_dias: int = 7, conservar: int = 8) -> Path | None:
+    """Respalda la base abierta con la API de SQLite. None si aún no toca o está desactivado."""
+    if cada_dias <= 0:
+        return None
+    carpeta = Path(carpeta_respaldo)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    fechas = [f for p in carpeta.glob("consultor_*.db") if (f := _fecha_respaldo(p))]
+    if fechas and (hoy - max(fechas)).days < cada_dias:
+        return None
+    destino = carpeta / f"consultor_{hoy:%Y-%m-%d}.db"
+    tmp = destino.with_name(destino.name + ".tmp")
+    tmp.unlink(missing_ok=True)
+    copia = sqlite3.connect(str(tmp))
+    try:
+        con.backup(copia)
+    except BaseException:
+        copia.close()
+        tmp.unlink(missing_ok=True)
+        raise
+    copia.close()
+    if _integridad(tmp) != "ok":
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError("el respaldo no pasó la verificación de integridad")
+    tmp.replace(destino)
+    if conservar > 0:
+        todos = sorted((f, p) for p in carpeta.glob("consultor_*.db") if (f := _fecha_respaldo(p)))
+        for _, p in todos[:-conservar]:
+            p.unlink(missing_ok=True)
+    return destino

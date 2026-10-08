@@ -1,10 +1,11 @@
 import shutil
+import sqlite3
 from datetime import date, timedelta
 
 import pytest
 
 import consultor.mantenimiento as mant
-from consultor.mantenimiento import archivar_reportes, borrar_archivo_antiguo
+from consultor.mantenimiento import archivar_reportes, borrar_archivo_antiguo, respaldar_base
 
 HOY = date(2026, 10, 8)
 
@@ -96,3 +97,83 @@ def test_borrar_archivo_antiguo(tmp_path):
     assert not a.exists() and b.exists()
     assert not a.parent.exists()  # carpeta vacía eliminada
     assert b.parent.exists()
+
+
+def base(tmp_path, filas=3):
+    con = sqlite3.connect(str(tmp_path / "origen.db"))
+    con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+    with con:
+        con.executemany("INSERT INTO t (v) VALUES (?)", [(f"fila{i}",) for i in range(filas)])
+    return con
+
+
+def filas(ruta):
+    con = sqlite3.connect(str(ruta))
+    try:
+        return con.execute("SELECT id, v FROM t ORDER BY id").fetchall()
+    finally:
+        con.close()
+
+
+def test_respaldo_crea_copia_con_las_mismas_filas(tmp_path):
+    con = base(tmp_path)
+    ruta = respaldar_base(con, tmp_path / "respaldo", HOY)
+    assert ruta == tmp_path / "respaldo" / "consultor_2026-10-08.db"
+    assert filas(ruta) == filas(tmp_path / "origen.db") and len(filas(ruta)) == 3
+
+
+def test_respaldo_respeta_la_frecuencia(tmp_path):
+    con = base(tmp_path)
+    carpeta = tmp_path / "respaldo"
+    assert respaldar_base(con, carpeta, HOY) is not None
+    assert respaldar_base(con, carpeta, HOY + timedelta(days=3)) is None
+    assert len(list(carpeta.glob("*.db"))) == 1
+    assert respaldar_base(con, carpeta, HOY + timedelta(days=8)) is not None
+    assert len(list(carpeta.glob("*.db"))) == 2
+    assert respaldar_base(con, carpeta, HOY + timedelta(days=30), cada_dias=0) is None
+
+
+def test_respaldo_conserva_solo_los_mas_recientes(tmp_path):
+    con = base(tmp_path)
+    carpeta = tmp_path / "respaldo"
+    for i in range(5):
+        assert respaldar_base(con, carpeta, HOY + timedelta(days=8 * i), conservar=3) is not None
+    quedan = sorted(p.name for p in carpeta.glob("*.db"))
+    esperado = [f"consultor_{HOY + timedelta(days=8 * i):%Y-%m-%d}.db" for i in (2, 3, 4)]
+    assert quedan == esperado
+
+
+def test_respaldo_con_la_base_abierta_incluye_lo_confirmado(tmp_path):
+    con = base(tmp_path)  # la conexión sigue abierta durante el respaldo
+    with con:
+        con.execute("INSERT INTO t (v) VALUES ('reciente')")
+    ruta = respaldar_base(con, tmp_path / "respaldo", HOY)
+    assert ("reciente" in [v for _, v in filas(ruta)])
+    assert len(filas(ruta)) == 4
+    with con:  # la base de origen sigue utilizable
+        con.execute("INSERT INTO t (v) VALUES ('despues')")
+    assert len(filas(tmp_path / "origen.db")) == 5
+
+
+def test_respaldo_que_no_pasa_la_integridad_se_borra_y_falla(tmp_path, monkeypatch):
+    con = base(tmp_path)
+    carpeta = tmp_path / "respaldo"
+    llamadas = []
+
+    def mala(ruta):
+        llamadas.append(ruta)
+        assert ruta.exists()  # se verificó un respaldo real, antes de borrarlo
+        return "*** in database main ***"
+
+    monkeypatch.setattr(mant, "_integridad", mala)
+    with pytest.raises(RuntimeError, match="no pasó la verificación de integridad"):
+        respaldar_base(con, carpeta, HOY)
+    assert llamadas
+    assert list(carpeta.glob("*.db")) == [] and list(carpeta.glob("*.tmp")) == []
+
+
+def test_respaldo_normal_no_deja_tmp(tmp_path):
+    con = base(tmp_path)
+    carpeta = tmp_path / "respaldo"
+    respaldar_base(con, carpeta, HOY)
+    assert list(carpeta.glob("*.tmp")) == []
