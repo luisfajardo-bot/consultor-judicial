@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -40,5 +41,12 @@ def test_se_libera_si_el_proceso_muere(tmp_path):
     finally:
         proc.kill()
         proc.wait()
-    with Bloqueo(tmp_path):  # el sistema operativo liberó el candado
-        pass
+    # el sistema operativo libera el candado al morir el proceso; en Windows puede tardar unos ms
+    for _ in range(50):
+        try:
+            with Bloqueo(tmp_path):
+                break
+        except CicloEnCurso:
+            time.sleep(0.1)
+    else:
+        pytest.fail("el candado no se liberó tras morir el proceso")
