@@ -7,6 +7,7 @@ from .models import ERROR, EXITOSA, FALLIDA, Actuacion, Consulta, Radicado
 
 BASE = "https://consultaprocesos.ramajudicial.gov.co:448/api/v2"
 USER_AGENT = "ConsultorJudicial/1.0 (Gerencia Juridica; consulta de procesos propios)"
+MAX_PAGINAS = 20
 RADICADO_RE = re.compile(r"^\d{23}$")
 
 
@@ -16,6 +17,10 @@ class ErrorPortal(Exception):
 
 def _fecha(valor) -> str:
     return (valor or "")[:10]
+
+
+def _sin_actuaciones(datos) -> bool:
+    return isinstance(datos, dict) and "No se encontraron" in str(datos.get("Message", ""))
 
 
 def _actuacion(a: dict, radicado: str) -> Actuacion:
@@ -66,7 +71,10 @@ class Fetcher:
                 motivo = type(e).__name__
             else:
                 if resp.status_code == 404:
-                    return 404, None
+                    try:
+                        return 404, resp.json()
+                    except ValueError:
+                        return 404, None
                 if resp.status_code == 200:
                     try:
                         return 200, resp.json()
@@ -77,6 +85,27 @@ class Fetcher:
             if intento < self.reintentos - 1:
                 self.dormir(self.espera * (2**intento))
         raise ErrorPortal(motivo)
+
+    def _actuaciones(self, id_proceso, radicado) -> list[Actuacion]:
+        acumuladas: list[Actuacion] = []
+        pagina = 1
+        while True:
+            estado, datos = self._get(
+                f"{BASE}/Proceso/Actuaciones/{id_proceso}", {"pagina": pagina}
+            )
+            if estado == 404:
+                if pagina == 1 and not _sin_actuaciones(datos):
+                    raise ErrorPortal("404 inesperado al pedir actuaciones")
+                break
+            lista = datos["actuaciones"]
+            acumuladas.extend(_actuacion(a, radicado) for a in lista)
+            total = max((a.get("cant") or 0 for a in lista), default=0)
+            if not lista or len(acumuladas) >= total:
+                break
+            pagina += 1
+            if pagina > MAX_PAGINAS:
+                raise ErrorPortal(f"más de {MAX_PAGINAS} páginas de actuaciones")
+        return acumuladas
 
     def _ultima_actualizacion(self, id_proceso) -> str:
         try:
@@ -98,18 +127,18 @@ class Fetcher:
             procesos = (datos or {}).get("procesos") or []
             if estado == 404 or not procesos:
                 return Consulta(FALLIDA, motivo="sin resultados")
-            proceso = procesos[0]
-            id_proceso = proceso["idProceso"]
-            estado, datos = self._get(
-                f"{BASE}/Proceso/Actuaciones/{id_proceso}", {"pagina": 1}
-            )
-            lista = [] if estado == 404 else datos["actuaciones"]
+            primero = procesos[0]
+            id_proceso = primero["idProceso"]
+            vistas: dict[int, Actuacion] = {}
+            for p in procesos:
+                for a in self._actuaciones(p["idProceso"], r.radicado):
+                    vistas.setdefault(a.id_reg_actuacion, a)
             return Consulta(
                 EXITOSA,
                 id_proceso=id_proceso,
-                despacho=(proceso.get("despacho") or "").strip(),
+                despacho=(primero.get("despacho") or "").strip(),
                 ultima_actualizacion=self._ultima_actualizacion(id_proceso),
-                actuaciones=tuple(_actuacion(a, r.radicado) for a in lista),
+                actuaciones=tuple(vistas.values()),
             )
         except ErrorPortal as e:
             return Consulta(FALLIDA, motivo=str(e), falla_portal=True)

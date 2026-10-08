@@ -132,7 +132,7 @@ def test_radicado_invalido_no_llama_al_portal():
 
 def test_actuaciones_404_es_proceso_sin_actuaciones():
     rutas = rutas_ok()
-    rutas["Actuaciones"] = RespuestaFalsa(404, {"StatusCode": 404})
+    rutas["Actuaciones"] = RespuestaFalsa(404, {"StatusCode": 404, "Message": "No se encontraron Actuaciones para el Proceso: 108832900"})
     f, _, _ = crear(rutas)
     c = f.consultar(RAD)
     assert c.estado == EXITOSA
@@ -195,3 +195,57 @@ def test_la_sesion_por_defecto_se_identifica_y_no_usa_el_user_agent_de_requests(
     f = Fetcher()
     assert f.sesion.headers["User-Agent"] == USER_AGENT
     assert not USER_AGENT.startswith("python-requests")
+
+
+def test_404_sin_el_mensaje_esperado_es_falla_del_portal():
+    rutas = rutas_ok()
+    rutas["Actuaciones"] = RespuestaFalsa(404, {"StatusCode": 404, "Message": "Otra cosa"})
+    f, _, _ = crear(rutas)
+    c = f.consultar(RAD)
+    assert c.estado == FALLIDA and c.falla_portal is True
+
+
+def test_404_con_cuerpo_ilegible_es_falla_del_portal():
+    rutas = rutas_ok()
+    rutas["Actuaciones"] = RespuestaFalsa(404, json_invalido=True)
+    f, _, _ = crear(rutas)
+    c = f.consultar(RAD)
+    assert c.estado == FALLIDA and c.falla_portal is True
+
+
+def _pagina(ids, cant):
+    return RespuestaFalsa(
+        200,
+        {
+            "actuaciones": [
+                {
+                    "idRegActuacion": i,
+                    "fechaActuacion": "2026-05-15T00:00:00",
+                    "actuacion": "x",
+                    "cant": cant,
+                }
+                for i in ids
+            ]
+        },
+    )
+
+
+def test_pide_mas_paginas_hasta_completar_el_total():
+    rutas = rutas_ok()
+    rutas["Actuaciones"] = [_pagina([3, 2], cant=3), _pagina([1], cant=3)]
+    f, sesion, _ = crear(rutas)
+    c = f.consultar(RAD)
+    assert [a.id_reg_actuacion for a in c.actuaciones] == [3, 2, 1]
+    paginas = [p["pagina"] for u, p in sesion.llamadas if "Actuaciones" in u]
+    assert paginas == [1, 2]
+
+
+def test_varios_procesos_para_un_radicado_se_unen_sin_duplicar():
+    rutas = rutas_ok()
+    busqueda = {"procesos": [{"idProceso": 1, "despacho": "A"}, {"idProceso": 2, "despacho": "B"}]}
+    rutas["NumeroRadicacion"] = RespuestaFalsa(200, busqueda)
+    rutas["Actuaciones"] = [_pagina([5, 4], cant=2), _pagina([4, 9], cant=2)]
+    f, _, _ = crear(rutas)
+    c = f.consultar(RAD)
+    assert c.id_proceso == 1 and c.despacho == "A"
+    assert sorted(a.id_reg_actuacion for a in c.actuaciones) == [4, 5, 9]
