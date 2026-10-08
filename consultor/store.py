@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS actuacion (
     id_reg_actuacion INTEGER PRIMARY KEY, radicado TEXT NOT NULL,
     fecha_actuacion TEXT, actuacion TEXT, anotacion TEXT, fecha_registro TEXT,
     fecha_inicial TEXT, fecha_final TEXT, primera_vez_visto TEXT);
-CREATE INDEX IF NOT EXISTS ix_actuacion_radicado ON actuacion(radicado);
+DROP INDEX IF EXISTS ix_actuacion_radicado;
+CREATE INDEX IF NOT EXISTS ix_actuacion_radicado_fecha
+    ON actuacion(radicado, fecha_actuacion DESC, id_reg_actuacion DESC);
 CREATE TABLE IF NOT EXISTS ciclo (
     id INTEGER PRIMARY KEY AUTOINCREMENT, inicio TEXT NOT NULL, fin TEXT,
     estado TEXT NOT NULL);
@@ -29,10 +31,13 @@ CREATE TABLE IF NOT EXISTS consulta (
     radicado TEXT NOT NULL, hora TEXT NOT NULL, estado TEXT NOT NULL,
     resultado TEXT NOT NULL, motivo TEXT, despacho TEXT, ultima_actualizacion TEXT,
     UNIQUE (ciclo_id, radicado));
+CREATE INDEX IF NOT EXISTS ix_consulta_radicado ON consulta(radicado, estado);
 CREATE TABLE IF NOT EXISTS alerta (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ciclo_id INTEGER NOT NULL,
     radicado TEXT NOT NULL, id_reg_actuacion INTEGER NOT NULL UNIQUE,
     anterior TEXT, estado TEXT NOT NULL, validada_por TEXT, validada_en TEXT);
+CREATE INDEX IF NOT EXISTS ix_alerta_ciclo ON alerta(ciclo_id);
+CREATE INDEX IF NOT EXISTS ix_alerta_pendiente ON alerta(id) WHERE estado = 'Pendiente';
 """
 
 CONSULTAS_SQL = """
@@ -111,12 +116,15 @@ class Store:
 
     # lectura
     def registrar_radicado(self, r: Radicado) -> None:
+        self.registrar_radicados([r])
+
+    def registrar_radicados(self, radicados) -> None:
         with self.con:
-            self.con.execute(
+            self.con.executemany(
                 "INSERT INTO radicado (radicado, empresa, despacho) VALUES (?, ?, ?) "
                 "ON CONFLICT(radicado) DO UPDATE SET "
                 "empresa = excluded.empresa, despacho = excluded.despacho",
-                (r.radicado, r.empresa, r.despacho),
+                [(r.radicado, r.empresa, r.despacho) for r in radicados],
             )
 
     def ya_consultado(self, ciclo_id: int, radicado: str) -> bool:

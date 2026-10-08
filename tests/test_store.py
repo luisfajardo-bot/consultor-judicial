@@ -154,3 +154,55 @@ def test_ciclos_abiertos_de_dias_anteriores_se_marcan_interrumpidos(store):
     assert store.cerrar_interrumpidos(manana) == 1
     assert store.cerrar_interrumpidos(manana) == 0
     assert store.iniciar_ciclo(manana) != viejo
+
+
+def plan(store, sql, params=()):
+    return " | ".join(f[3] for f in store.con.execute("EXPLAIN QUERY PLAN " + sql, params))
+
+
+def test_tiene_referencia_usa_indice_y_no_recorre_la_tabla(store):
+    p = plan(store, "SELECT 1 FROM consulta WHERE radicado = ? AND estado = 'Exitosa' LIMIT 1", (R.radicado,))
+    assert "SCAN" not in p and "ix_consulta_radicado" in p
+
+
+def test_ultima_actuacion_no_necesita_ordenar_aparte(store):
+    p = plan(
+        store,
+        "SELECT fecha_actuacion, actuacion FROM actuacion WHERE radicado = ? "
+        "ORDER BY fecha_actuacion DESC, id_reg_actuacion DESC LIMIT 1",
+        (R.radicado,),
+    )
+    assert "TEMP B-TREE" not in p and "ix_actuacion_radicado_fecha" in p
+
+
+def test_consultas_de_alertas_usan_indice(store):
+    from consultor.store import ALERTAS_SQL, PENDIENTES_SQL
+
+    assert "ix_alerta_ciclo" in plan(store, ALERTAS_SQL, (1,))
+    assert "ix_alerta_pendiente" in plan(store, PENDIENTES_SQL, (1,))
+
+
+def test_registrar_radicados_en_lote(store):
+    otros = [Radicado(f"{i:023d}", empresa="X") for i in range(1, 6)]
+    store.registrar_radicados(otros)
+    assert store.con.execute("SELECT COUNT(*) FROM radicado").fetchone()[0] == 6  # 5 + el del fixture
+    store.registrar_radicados([Radicado(otros[0].radicado, empresa="Y")])
+    assert store.con.execute("SELECT empresa FROM radicado WHERE radicado = ?", (otros[0].radicado,)).fetchone()[0] == "Y"
+
+
+def test_una_base_con_el_esquema_viejo_se_migra_al_abrirla(tmp_path):
+    import sqlite3
+
+    ruta = tmp_path / "vieja.db"
+    con = sqlite3.connect(ruta)
+    con.executescript(
+        "CREATE TABLE actuacion (id_reg_actuacion INTEGER PRIMARY KEY, radicado TEXT NOT NULL, "
+        "fecha_actuacion TEXT, actuacion TEXT, anotacion TEXT, fecha_registro TEXT, fecha_inicial TEXT, "
+        "fecha_final TEXT, primera_vez_visto TEXT);"
+        "CREATE INDEX ix_actuacion_radicado ON actuacion(radicado);"
+    )
+    con.close()
+    s = Store(ruta)
+    nombres = {r[0] for r in s.con.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert "ix_actuacion_radicado_fecha" in nombres
+    assert "ix_actuacion_radicado" not in nombres

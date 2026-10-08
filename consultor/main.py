@@ -48,8 +48,8 @@ def correr_ciclo(
     consultados = fallas = 0
     detenido = False
     ultimo = len(radicados) - 1
+    store.registrar_radicados(radicados)
     for i, r in enumerate(radicados):
-        store.registrar_radicado(r)
         if store.ya_consultado(ciclo_id, r.radicado):
             continue
         if detenido:
