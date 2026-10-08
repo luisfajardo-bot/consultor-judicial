@@ -166,3 +166,19 @@ Riesgos propios de la solución:
 4. Procesos contencioso-administrativos con publicación parcial: solo entran los validados en la Semana 1.
 5. Dependencia de una sola persona validadora y de un responsable técnico. Mitigación: la revisión manual no se suspende.
 6. Fecha de la spec vencida: la construcción termina el 9-oct y el piloto empieza el 19-oct. El alcance real de esta primera entrega debe acordarse con la coordinación.
+
+## 12. Cambios posteriores a este diseño (2026-10-08)
+
+Surgieron de la revisión independiente y de las pruebas contra el portal real. El código es la referencia; esto resume lo que cambió respecto a las secciones anteriores.
+
+- **El portal limita las peticiones.** Corta con HTTP 403 tras unas 60 a 70 peticiones y libera en unos 2 minutos. El fetcher pausa entre peticiones, espera y reintenta ante un 403 o 429, y si persiste el ciclo queda Pausado y se reanuda en la siguiente ejecución. Detalle en la nota de la bóveda "Operación y límites del portal".
+- **Identificación:** el portal rechaza el User-Agent por defecto de `requests`. Se usa uno propio y descriptivo.
+- **Tres llamadas por radicado se redujeron a dos por defecto:** el detalle (fecha de replicación) viene apagado.
+- **Procesos y páginas:** se consultan todos los procesos que devuelva un radicado y todas las páginas de actuaciones (campo `cant`). Un 404 solo se acepta como "sin actuaciones" si trae el mensaje esperado.
+- **Alertas pendientes:** reaparecen en cada reporte hasta que Alisson las decide, aunque nacieran en un ciclo interrumpido.
+- **Un reporte siempre se escribe antes de cerrar el ciclo**, y los caracteres de control se eliminan de los textos.
+- **Alerta de posible cambio en la API** cuando una respuesta llega con forma inesperada, incluida una clave renombrada.
+- **Candado, límite entre ejecuciones y avance en consola.** Dos ciclos a la vez son imposibles; por defecto no se repite una consulta completa antes de 30 minutos.
+- **Base de datos:** índices en todas las consultas por radicado y registro de radicados en lote. Sin modo WAL por la posible unidad de red.
+- **Filtro de estado por prefijo:** `ACTIVO` incluye `ACTIVO -COBRO COSTAS`.
+- **Fuente real:** la hoja `GENERAL` no trae columna de empresa. Hoy el reporte deja ese campo vacío.

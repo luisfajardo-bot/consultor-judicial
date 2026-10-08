@@ -12,6 +12,7 @@ No decide nada jurídico. El seguimiento manual sigue en paralelo.
 - [[Criterios de aceptación]]: CA1 a CA5
 - [[Validación humana]]: cómo marca Alisson sus decisiones
 - [[Decisiones]]: qué se eligió y por qué
+- [[Operación y límites del portal]]: cuotas del portal, pausas, candado y alertas
 - [[Riesgos y pendientes]]
 
 ## Módulos
