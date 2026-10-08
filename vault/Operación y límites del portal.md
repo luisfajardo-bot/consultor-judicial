@@ -27,6 +27,15 @@ Resultado real: ciclo de 41 radicados en 1 a 8 minutos según cuánto frene el p
 - Con consola, se ve una barra de avance. El avance también se publica en `estado.txt` para quien intente lanzar un segundo ciclo.
 - `scripts\ejecutar_ahora.bat` es el doble clic para personas no técnicas.
 
+## Mantenimiento al final de cada ciclo
+
+- **Archivado:** los reportes con más de 14 días pasan a `reportesrchivo\AAAA-MM\`. No se borran. Nunca se archiva el reporte más reciente. Un archivo abierto en Excel se salta y se reintenta en el siguiente ciclo.
+- **Borrado del archivo:** existe pero está apagado (`borrar_archivo_tras_dias = 0`). El plazo de conservación como evidencia lo decide la Gerencia Jurídica.
+- **Respaldo de la base:** cada 7 días, con la función de respaldo de SQLite, verificado con `integrity_check`, en `datosespaldo\`. Se conservan las últimas 8 copias.
+- Un fallo del mantenimiento nunca tumba el ciclo ni cambia el código de salida: se avisa y se sigue.
+- Decidir en un reporte archivado no se importa. Las alertas pendientes reaparecen siempre en el reporte más reciente, y ahí se decide.
+- Los reportes pesan unos 10 KB, así que el motivo de archivar es el orden, no el disco.
+
 ## Alertas que puede dar la herramienta
 
 | Mensaje | Qué significa | Qué hacer |
