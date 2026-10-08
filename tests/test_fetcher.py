@@ -249,3 +249,25 @@ def test_varios_procesos_para_un_radicado_se_unen_sin_duplicar():
     c = f.consultar(RAD)
     assert c.id_proceso == 1 and c.despacho == "A"
     assert sorted(a.id_reg_actuacion for a in c.actuaciones) == [4, 5, 9]
+
+
+def _busqueda_con(cuerpo):
+    rutas = rutas_ok()
+    rutas["NumeroRadicacion"] = RespuestaFalsa(200, cuerpo)
+    f, _, _ = crear(rutas)
+    return f.consultar(RAD)
+
+
+def test_clave_renombrada_en_la_busqueda_es_error_no_sin_resultados():
+    c = _busqueda_con({"resultados": []})
+    assert c.estado == ERROR and c.falla_portal is True
+
+
+def test_proceso_sin_id_proceso_es_error():
+    c = _busqueda_con({"procesos": [{"despacho": "A"}]})
+    assert c.estado == ERROR
+
+
+def test_busqueda_con_cuerpo_lista_es_error():
+    c = _busqueda_con([])
+    assert c.estado == ERROR

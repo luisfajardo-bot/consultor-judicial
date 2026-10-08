@@ -124,8 +124,10 @@ class Fetcher:
                 f"{BASE}/Procesos/Consulta/NumeroRadicacion",
                 {"numero": r.radicado, "SoloActivos": "false", "pagina": 1},
             )
-            procesos = (datos or {}).get("procesos") or []
-            if estado == 404 or not procesos:
+            if estado == 404:
+                return Consulta(FALLIDA, motivo="sin resultados", falla_portal=True)
+            procesos = datos["procesos"]  # sin .get: una clave renombrada debe ser ERROR
+            if not procesos:
                 return Consulta(FALLIDA, motivo="sin resultados", falla_portal=True)
             primero = procesos[0]
             id_proceso = primero["idProceso"]
