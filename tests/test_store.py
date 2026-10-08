@@ -270,3 +270,24 @@ def test_un_ciclo_pausado_cuenta_para_el_ultimo_cierre(store):
     a = store.iniciar_ciclo(AHORA)
     store.cerrar_ciclo(a, "Pausado: x", AHORA + timedelta(minutes=2))
     assert store.ultimo_cierre() == AHORA + timedelta(minutes=2)
+
+
+def test_ultimo_ciclo_devuelve_el_ultimo_cerrado(store):
+    assert store.ultimo_ciclo() is None
+    abierto = store.iniciar_ciclo(AHORA)
+    assert store.ultimo_ciclo() is None  # sigue En curso
+    store.cerrar_ciclo(abierto, "Completo", AHORA + timedelta(minutes=3))
+    u = store.ultimo_ciclo()
+    assert u["id"] == abierto
+    assert u["estado"] == "Completo"
+    assert u["fin"] == AHORA + timedelta(minutes=3)
+    assert u["parcial"] is False
+
+
+def test_contar_pendientes_cuenta_solo_las_pendientes(store):
+    assert store.contar_pendientes() == 0
+    c2 = _con_novedad(store)
+    assert store.contar_pendientes() == 1
+    alerta_id = store.filas_reporte(c2)[0]["alerta_id"]
+    store.registrar_decision(alerta_id, DESCARTADA, "Alisson", AHORA)
+    assert store.contar_pendientes() == 0

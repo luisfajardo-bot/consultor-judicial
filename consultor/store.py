@@ -127,7 +127,25 @@ class Store:
         f = self.con.execute("SELECT MAX(fin) AS fin FROM ciclo WHERE fin IS NOT NULL AND parcial = 0").fetchone()
         return datetime.fromisoformat(f["fin"]) if f["fin"] else None
 
-    def cerrar_ciclo(self, ciclo_id: int, estado: str, ahora: datetime) -> None:
+    def ultimo_ciclo(self) -> dict | None:
+        f = self.con.execute(
+            "SELECT id, inicio, fin, estado, parcial FROM ciclo "
+            "WHERE fin IS NOT NULL ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if f is None:
+            return None
+        return {
+            "id": f["id"],
+            "inicio": datetime.fromisoformat(f["inicio"]),
+            "fin": datetime.fromisoformat(f["fin"]),
+            "estado": f["estado"],
+            "parcial": bool(f["parcial"]),
+        }
+
+    def contar_pendientes(self) -> int:
+        return self.con.execute("SELECT COUNT(*) FROM alerta WHERE estado = 'Pendiente'").fetchone()[0]
+
+    def cerrar_ciclo(self,ciclo_id: int, estado: str, ahora: datetime) -> None:
         with self.con:
             self.con.execute(
                 "UPDATE ciclo SET fin = ?, estado = ? WHERE id = ?",
