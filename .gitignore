@@ -5,3 +5,5 @@ datos/
 reportes/
 config.toml
 entrada/
+*.xlsx
+*.csv
