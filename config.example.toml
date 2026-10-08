@@ -1,0 +1,22 @@
+[fuente]
+tipo = "excel"
+ruta = "C:/consultor_judicial/entrada/extracto_procesos.xlsx"
+hoja = "GENERAL"
+col_radicado = "Radicado"
+col_empresa = "Empresa"
+col_despacho = "Despacho"
+col_calidad = "Calidad"
+col_estado = "Estado"
+estados_incluidos = []
+
+[salida]
+base_datos = "datos/consultor.db"
+carpeta_reportes = "reportes"
+validador = "Alisson Rengifo"
+
+[portal]
+pausa_segundos = 1.0
+reintentos = 3
+espera_segundos = 2.0
+timeout_segundos = 30
+max_fallas_ciclo = 0.5
