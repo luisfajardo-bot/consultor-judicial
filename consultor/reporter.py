@@ -124,8 +124,15 @@ def leer_decisiones(carpeta, avisar_fn=None) -> list[tuple[int, str, str]]:
                 i_dec = enc.index("Decisión")
                 i_val = enc.index("Validó")
                 for f in filas:
-                    if f[i_id] and f[i_dec] in (CONFIRMADA, DESCARTADA):
-                        decisiones.append((int(f[i_id]), f[i_dec], f[i_val] or ""))
+                    if not (f[i_id] and f[i_dec] in (CONFIRMADA, DESCARTADA)):
+                        continue
+                    try:
+                        alerta_id = int(f[i_id])
+                    except (TypeError, ValueError):
+                        if avisar_fn:
+                            avisar_fn(f"ID de alerta inválido ({f[i_id]!r}) en {ruta.name}; fila ignorada.")
+                        continue
+                    decisiones.append((alerta_id, f[i_dec], f[i_val] or ""))
             finally:
                 wb.close()
         except (OSError, ValueError, KeyError, StopIteration, zipfile.BadZipFile) as e:

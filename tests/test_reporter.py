@@ -127,3 +127,18 @@ def test_caracteres_de_control_se_eliminan_en_vez_de_romper_el_reporte(tmp_path)
     hoja = wb["Alertas"]
     enc = [c.value for c in hoja[1]]
     assert hoja.cell(row=2, column=enc.index("Anotación detectada") + 1).value == "Auto quedecreta pruebas"
+
+
+def test_id_de_alerta_invalido_se_avisa_y_no_descarta_las_demas_decisiones(tmp_path):
+    ruta = escribir(tmp_path, [novedad(alerta_id=7), novedad(alerta_id=8)])
+    wb = load_workbook(ruta)
+    hoja = wb["Alertas"]
+    enc = [c.value for c in hoja[1]]
+    for fila, decision in ((2, "Confirmada"), (3, "Descartada")):
+        hoja.cell(row=fila, column=enc.index("Decisión") + 1, value=decision)
+        hoja.cell(row=fila, column=enc.index("Validó") + 1, value="Alisson Rengifo")
+    hoja.cell(row=2, column=enc.index("ID alerta") + 1, value="nota")
+    wb.save(ruta)
+    avisos = []
+    assert leer_decisiones(tmp_path, avisos.append) == [(8, "Descartada", "Alisson Rengifo")]
+    assert any("ID de alerta" in a for a in avisos)
