@@ -2,7 +2,15 @@
 
 Consulta los radicados de la lista en la API de la Rama Judicial, detecta actuaciones nuevas y deja un Excel de alertas para que Alisson Rengifo las valide. No decide nada jurídico y no escribe en el cuadro oficial.
 
+## Requisitos
+
+- **Python 3.11 o superior** (probado en 3.12 y 3.14, en Windows y en Linux).
+- Dependencias: `requests` y `openpyxl`, fijadas en `requirements.txt`. Para desarrollar y probar, `requirements-dev.txt` añade `pytest`.
+- La ventana usa `tkinter`, que viene con Python en Windows y no se instala con pip. En Linux y en Docker no hay ventana: el programa funciona igual desde la línea de comandos.
+
 ## Instalación
+
+Windows:
 
 ```
 python -m venv .venv
@@ -10,16 +18,41 @@ python -m venv .venv
 copy config.example.toml config.toml
 ```
 
-Edita `config.toml`: ruta del Excel con los radicados y nombres de sus columnas.
+Linux o macOS:
+
+```
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+cp config.example.toml config.toml
+```
+
+Edita `config.toml`: ruta del Excel con los radicados y nombres de sus columnas. `config.toml` no se sube a git.
 
 ## Uso
 
 ```
 python -m consultor run
 python -m consultor run --solo-radicado 11001400307720210114700
+python -m consultor run --forzar
+python -m consultor ventana
 ```
 
-Códigos de salida: 0 ciclo completo, 1 detenido por fuente no disponible, 2 error inesperado.
+`--forzar` salta el límite entre ejecuciones (no el candado). `ventana` abre la pantalla (solo Windows).
+
+Códigos de salida: 0 ciclo completo, 1 pausado, detenido o con alertas (portal bloqueado, API cambiada, fuente no disponible), 2 error inesperado, 3 no se ejecutó porque ya hay otro ciclo en curso o la última consulta es muy reciente.
+
+## Datos que no deben subirse a git
+
+El Excel de procesos, `config.toml`, `datos\` (la base SQLite) y `reportes\` contienen la posición litigiosa de la empresa. `.gitignore` ya los excluye; no los fuerces.
+
+## Pruebas
+
+```
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+En Linux sin librerías gráficas, las pruebas de la ventana se saltan solas.
 
 ## Validación
 
@@ -82,9 +115,3 @@ No hace falta hacer nada más que esperar el tiempo que indica el mensaje (30 mi
 ## Limitaciones conocidas
 
 - Una decisión corregida en el Excel se ignora: solo cuenta la primera decisión registrada para cada alerta.
-
-## Pruebas
-
-```
-python -m pytest
-```

@@ -1,6 +1,7 @@
 import pytest
 
-tk = pytest.importorskip("tkinter")
+# En Linux sin librerías gráficas el import falla con ImportError, no con ModuleNotFoundError
+tk = pytest.importorskip("tkinter", exc_type=ImportError)
 
 import consultor.main as main_mod  # noqa: E402
 from consultor.bloqueo import Bloqueo  # noqa: E402

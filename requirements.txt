@@ -1,3 +1,4 @@
-requests>=2.32
-openpyxl>=3.1
-pytest>=8.0
+# Dependencias para ejecutar el programa. Python 3.11 o superior (probado en 3.12 y 3.14).
+# tkinter (la ventana) no se instala con pip: viene con Python en Windows.
+requests==2.34.2
+openpyxl==3.1.5
