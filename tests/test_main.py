@@ -4,7 +4,7 @@ from openpyxl import Workbook, load_workbook
 import consultor.main as main_mod
 from consultor.bloqueo import Bloqueo
 from consultor.main import MOTIVO_DETENIDO, correr_ciclo
-from consultor.models import FALLIDA, Consulta, Radicado
+from consultor.models import ERROR, FALLIDA, Consulta, Radicado
 from consultor.reporter import LEYENDA
 from consultor.store import Store
 from tests.utiles import Reloj, act, ok
@@ -175,6 +175,36 @@ def test_portal_caido_con_pocos_radicados_no_cierra_como_completo(tmp_path):
     res = correr(tmp_path, radicados, f, Store(":memory:"), Reloj(), avisos)
     assert res.estado == "Completo con fallas de la fuente"
     assert any("Fuente no disponible" in a for a in avisos)
+
+
+FORMA_ROTA = Consulta(ERROR, motivo="respuesta inesperada: KeyError", falla_portal=True)
+
+
+def test_un_error_de_forma_cierra_con_alerta_de_cambio_en_la_api(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 6)]
+    resp = {r.radicado: ok(act(1)) for r in rs}
+    resp[rs[4].radicado] = FORMA_ROTA
+    avisos = []
+    res = correr(tmp_path, rs, FetcherFalso(resp), Store(":memory:"), Reloj(), avisos)
+    assert res.estado == "Completo con alerta: posible cambio en la API"
+    assert any("posiblemente cambió" in a and "1 de 5" in a for a in avisos)
+    assert not any("Fuente no disponible" in a for a in avisos)
+
+
+def test_muchos_errores_de_forma_detienen_con_alerta_de_api(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 13)]
+    avisos = []
+    res = correr(tmp_path, rs, FetcherFalso({r.radicado: FORMA_ROTA for r in rs}), Store(":memory:"), Reloj(), avisos)
+    assert res.estado == "Detenido: posible cambio en la API"
+    assert any("posiblemente cambió" in a for a in avisos)
+
+
+def test_todo_correcto_no_lanza_alerta_de_api(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 4)]
+    avisos = []
+    res = correr(tmp_path, rs, FetcherFalso({r.radicado: ok(act(1)) for r in rs}), Store(":memory:"), Reloj(), avisos)
+    assert res.estado == "Completo"
+    assert not any("posiblemente cambió" in a for a in avisos)
 
 
 def test_lista_vacia_avisa_y_no_es_completo(tmp_path):

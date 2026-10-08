@@ -12,7 +12,7 @@ from .comparator import comparar
 from .consola import barra
 from .fetcher import Fetcher
 from .loader import crear_fuente
-from .models import FALLIDA, NO_VERIFICADO, Consulta, Veredicto
+from .models import ERROR, FALLIDA, NO_VERIFICADO, Consulta, Veredicto
 from .reporter import LEYENDA, avisar, escribir_reporte, leer_decisiones
 from .store import Store
 
@@ -49,7 +49,7 @@ def correr_ciclo(
     if interrumpidos:
         avisar_fn(f"{interrumpidos} ciclo(s) anterior(es) quedaron interrumpido(s). Sus alertas pendientes siguen en el reporte.")
     ciclo_id = store.iniciar_ciclo(ahora(), parcial)
-    consultados = fallas = 0
+    consultados = fallas = cambios_api = 0
     detenido = False
     ultimo = len(radicados) - 1
     store.registrar_radicados(radicados)
@@ -75,6 +75,7 @@ def correr_ciclo(
             )
             consultados += 1
             fallas += consulta.falla_portal
+            cambios_api += consulta.estado == ERROR
             if consultados >= MIN_MUESTRA and fallas / consultados > max_fallas:  # R5
                 detenido = True
                 avisar_fn(
@@ -87,8 +88,18 @@ def correr_ciclo(
             progreso(i + 1, len(radicados), r.radicado)
 
     fuente_caida = consultados > 0 and fallas / consultados > max_fallas
-    if detenido:
+    if cambios_api:
+        avisar_fn(
+            f"ALERTA: la API de la Rama Judicial posiblemente cambió. {cambios_api} de {consultados} "
+            "consultas devolvieron una respuesta con una forma inesperada. "
+            "Revisar la herramienta y usar la consulta manual mientras tanto."
+        )
+    if detenido and cambios_api:
+        estado = "Detenido: posible cambio en la API"
+    elif detenido:
         estado = "Detenido: fuente no disponible"
+    elif cambios_api:
+        estado = "Completo con alerta: posible cambio en la API"
     elif fuente_caida:
         estado = "Completo con fallas de la fuente"
         avisar_fn(
