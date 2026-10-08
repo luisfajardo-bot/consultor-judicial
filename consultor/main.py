@@ -238,13 +238,17 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
 def ejecutar(argv=None) -> int:
     """0 = ciclo completo, 1 = detenido o con fallas, 2 = error inesperado, 3 = no se ejecutó (candado o límite)."""
     p = argparse.ArgumentParser(prog="consultor")
-    p.add_argument("comando", choices=["run"])
+    p.add_argument("comando", choices=["run", "ventana"])
     p.add_argument("--config", default="config.toml")
     p.add_argument("--solo-radicado", help="consulta un único radicado, para pruebas")
     p.add_argument("--forzar", action="store_true", help="salta el límite entre ejecuciones (no el candado)")
     p.add_argument("--abrir", action="store_true", help="abre el Excel al terminar")
     args = p.parse_args(argv)
 
+    if args.comando == "ventana":
+        from .ventana import abrir  # tkinter solo se exige para la ventana, no para "run"
+
+        return abrir(args.config)
     cfg = cargar_config(args.config)
     consola = sys.stdout.isatty()
     barra_activa = False
