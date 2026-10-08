@@ -45,7 +45,7 @@ class FuenteExcel:
         self.col_despacho = col_despacho
         self.col_calidad = col_calidad
         self.col_estado = col_estado
-        self.estados = {e.strip().lower() for e in estados_incluidos}
+        self.estados = tuple(e.strip().lower() for e in estados_incluidos if e.strip())
 
     def cargar(self) -> list[Radicado]:
         wb = load_workbook(self.ruta, read_only=True, data_only=True)
@@ -66,7 +66,8 @@ class FuenteExcel:
                 rad = _radicado(fila[i_rad]) if i_rad < len(fila) else ""
                 if not rad:
                     continue
-                if self.estados and celda(fila, i_est).lower() not in self.estados:
+                # "ACTIVO" admite variantes del Excel como "ACTIVO -COBRO COSTAS"
+                if self.estados and not celda(fila, i_est).lower().startswith(self.estados):
                     continue
                 nuevo = Radicado(rad, celda(fila, i_emp), celda(fila, i_des), celda(fila, i_cal))
                 previo = por_radicado.get(rad)

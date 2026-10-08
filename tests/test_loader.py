@@ -81,6 +81,23 @@ def test_filtra_por_estado_si_se_configura(tmp_path):
     assert [r.radicado for r in radicados] == ["11001400307720210114700"]
 
 
+def test_el_filtro_de_estado_acepta_variantes_que_empiezan_igual(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(
+        ruta,
+        [
+            ["11001400307720210114700", "", "", "", "ACTIVO"],
+            ["11001400307720210114701", "", "", "", "ACTIVO -COBRO COSTAS"],
+            ["11001400307720210114702", "", "", "", "  activo "],
+            ["11001400307720210114703", "", "", "", "CERRADO"],
+            ["11001400307720210114704", "", "", "", "CERRADO POR NO SER PARTE"],
+            ["11001400307720210114705", "", "", "", None],
+        ],
+    )
+    radicados = fuente(ruta, estados_incluidos=["ACTIVO"]).cargar()
+    assert [r.radicado[-2:] for r in radicados] == ["00", "01", "02"]
+
+
 def test_columna_inexistente_da_un_error_claro(tmp_path):
     ruta = tmp_path / "x.xlsx"
     hacer_excel(ruta, [], encabezado=["Otra"])
