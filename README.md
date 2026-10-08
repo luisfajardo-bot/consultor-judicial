@@ -33,6 +33,11 @@ schtasks /Create /TN "ConsultorJudicial" /TR "C:\consultor_judicial\scripts\ejec
 
 La cuenta debe tener permiso de lectura sobre el Excel de radicados y de escritura sobre `datos\` y `reportes\`.
 
+## Limitaciones conocidas
+
+- Una decisión corregida en el Excel se ignora: solo cuenta la primera decisión registrada para cada alerta.
+- No se deben lanzar dos ciclos a la vez (por ejemplo la tarea programada y una ejecución manual el mismo día).
+
 ## Pruebas
 
 ```
