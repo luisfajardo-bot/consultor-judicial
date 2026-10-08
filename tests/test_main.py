@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -454,3 +454,106 @@ def test_ejecutar_ciclo_publica_el_avance_en_estado_txt_mientras_corre(tmp_path,
         (tmp_path / "datos" / "estado.txt").read_text(encoding="utf-8")))
     assert visto and "1 de 1" in visto[0]
     assert not (tmp_path / "datos" / "estado.txt").exists()  # se borra al terminar
+
+
+# mantenimiento al final del ciclo
+
+def _con_mantenimiento(tmp_path, monkeypatch, seccion=""):
+    args = preparar(tmp_path, monkeypatch, minutos=0)
+    cfg = tmp_path / "config.toml"
+    if seccion:
+        cfg.write_text(cfg.read_text(encoding="utf-8") + "[mantenimiento]\n" + seccion, encoding="utf-8")
+    return main_mod.cargar_config(str(cfg)), tmp_path / "reportes"
+
+
+def _viejos(carpeta, n=2, dias=40):
+    carpeta.mkdir(parents=True, exist_ok=True)
+    f = datetime.now() - timedelta(days=dias)
+    rutas = []
+    for i in range(n):  # número 0 en todos: el ciclo nuevo (número 1) es el protegido
+        ruta = carpeta / f"reporte_ciclo_0000_{f - timedelta(days=i):%Y-%m-%d}.xlsx"
+        ruta.write_bytes(b"x")
+        rutas.append(ruta)
+    return rutas, f
+
+
+def _log(tmp_path):
+    p = tmp_path / "reportes" / "avisos.log"
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def test_tras_un_ciclo_hay_un_respaldo_de_hoy(tmp_path, monkeypatch):
+    cfg, _ = _con_mantenimiento(tmp_path, monkeypatch)
+    assert main_mod.ejecutar_ciclo(cfg).codigo == 0
+    assert (tmp_path / "datos" / "respaldo" / f"consultor_{datetime.now():%Y-%m-%d}.db").exists()
+
+
+def test_tras_un_ciclo_los_reportes_viejos_se_archivan(tmp_path, monkeypatch):
+    cfg, carpeta = _con_mantenimiento(tmp_path, monkeypatch)
+    viejos, f = _viejos(carpeta)
+    e = main_mod.ejecutar_ciclo(cfg)
+    assert e.codigo == 0
+    for i, v in enumerate(viejos):
+        mes = f"{f - timedelta(days=i):%Y-%m}"
+        assert (carpeta / "archivo" / mes / v.name).exists() and not v.exists()
+    assert e.resumen.reporte.exists()  # el del ciclo sigue en su sitio
+
+
+def test_por_defecto_no_se_borra_nada_del_archivo(tmp_path, monkeypatch):
+    cfg, carpeta = _con_mantenimiento(tmp_path, monkeypatch)
+    f = datetime.now() - timedelta(days=900)
+    antiguo = carpeta / "archivo" / f"{f:%Y-%m}" / f"reporte_ciclo_0000_{f:%Y-%m-%d}.xlsx"
+    antiguo.parent.mkdir(parents=True)
+    antiguo.write_bytes(b"x")
+    main_mod.ejecutar_ciclo(cfg)
+    assert antiguo.exists()
+
+
+def test_con_borrado_activado_se_borra_lo_antiguo_del_archivo(tmp_path, monkeypatch):
+    cfg, carpeta = _con_mantenimiento(tmp_path, monkeypatch, "borrar_archivo_tras_dias = 90\n")
+    f = datetime.now() - timedelta(days=900)
+    antiguo = carpeta / "archivo" / f"{f:%Y-%m}" / f"reporte_ciclo_0000_{f:%Y-%m-%d}.xlsx"
+    antiguo.parent.mkdir(parents=True)
+    antiguo.write_bytes(b"x")
+    main_mod.ejecutar_ciclo(cfg)
+    assert not antiguo.exists()
+
+
+def test_si_falla_el_archivado_el_ciclo_sigue_bien_y_avisa(tmp_path, monkeypatch):
+    cfg, _ = _con_mantenimiento(tmp_path, monkeypatch)
+
+    def falla(*a, **k):
+        raise OSError("disco")
+
+    monkeypatch.setattr(main_mod, "archivar_reportes", falla)
+    e = main_mod.ejecutar_ciclo(cfg)
+    assert e.codigo == 0 and e.resumen.estado == "Completo"
+    assert Store(cfg["salida"]["base_datos"]).ultimo_ciclo()["estado"] == "Completo"
+    assert "mantenimiento" in _log(tmp_path).lower()
+    assert (tmp_path / "datos" / "respaldo").exists()  # el otro paso siguió
+
+
+def test_si_falla_el_respaldo_el_ciclo_sigue_bien_y_avisa(tmp_path, monkeypatch):
+    cfg, _ = _con_mantenimiento(tmp_path, monkeypatch)
+
+    def falla(*a, **k):
+        raise RuntimeError("el respaldo no pasó la verificación de integridad")
+
+    monkeypatch.setattr(main_mod, "respaldar_base", falla)
+    e = main_mod.ejecutar_ciclo(cfg)
+    assert e.codigo == 0
+    assert "respaldo" in _log(tmp_path).lower()
+
+
+def test_un_ciclo_rechazado_no_ejecuta_mantenimiento(tmp_path, monkeypatch):
+    cfg, _ = _con_mantenimiento(tmp_path, monkeypatch)
+    cfg["ejecucion"]["min_minutos_entre_ciclos"] = 30
+    assert main_mod.ejecutar_ciclo(cfg).codigo == 0
+    llamadas = []
+    monkeypatch.setattr(main_mod, "archivar_reportes", lambda *a, **k: llamadas.append("a") or [])
+    monkeypatch.setattr(main_mod, "respaldar_base", lambda *a, **k: llamadas.append("r"))
+    assert main_mod.ejecutar_ciclo(cfg).codigo == 3  # por el límite
+    with Bloqueo(tmp_path / "datos") as b:
+        b.publicar("09:00 | 1 de 2")
+        assert main_mod.ejecutar_ciclo(cfg).codigo == 3  # por el candado
+    assert llamadas == []

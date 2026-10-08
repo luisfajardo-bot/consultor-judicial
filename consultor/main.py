@@ -12,6 +12,7 @@ from .comparator import comparar
 from .consola import barra
 from .fetcher import Fetcher
 from .loader import crear_fuente
+from .mantenimiento import archivar_reportes, borrar_archivo_antiguo, respaldar_base
 from .models import ERROR, FALLIDA, NO_VERIFICADO, Consulta, Veredicto
 from .reporter import LEYENDA, escribir_reporte, leer_decisiones
 from .store import Store
@@ -158,6 +159,29 @@ def _registrar(texto, log):
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {texto}\n")
 
 
+def _mantenimiento(cfg, store, avisar_fn, hoy) -> None:
+    """Archiva reportes y respalda la base. Un fallo se avisa y nunca tumba el ciclo."""
+    m = cfg.get("mantenimiento", {})
+    carpeta = Path(cfg["salida"]["carpeta_reportes"])
+    try:
+        movidos = archivar_reportes(carpeta, hoy, m.get("archivar_reportes_tras_dias", 14))
+        if m.get("borrar_archivo_tras_dias", 0) > 0:
+            borrar_archivo_antiguo(carpeta, hoy, m["borrar_archivo_tras_dias"])
+        if movidos:
+            avisar_fn(f"Mantenimiento: {len(movidos)} reportes archivados.")
+    except Exception as e:
+        avisar_fn(f"Mantenimiento: no se pudo archivar los reportes ({type(e).__name__}: {e})")
+    try:
+        destino = m.get("carpeta_respaldo") or Path(cfg["salida"]["base_datos"]).parent / "respaldo"
+        ruta = respaldar_base(
+            store.con, destino, hoy, m.get("respaldo_cada_dias", 7), m.get("respaldos_a_conservar", 8)
+        )
+        if ruta:
+            avisar_fn(f"Mantenimiento: respaldo creado en {ruta}.")
+    except Exception as e:
+        avisar_fn(f"Mantenimiento: falló el respaldo de la base de datos ({type(e).__name__}: {e})")
+
+
 def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avisar_fn=None) -> Ejecucion:
     """Un ciclo con candado, límite entre ejecuciones y avance publicado. No imprime.
 
@@ -220,6 +244,7 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                 parcial=bool(solo_radicado),
                 min_minutos=minimo,
             )
+            _mantenimiento(cfg, store, aviso, datetime.now().date())
     except CicloEnCurso as e:
         msg = (
             "Ya hay una consulta en curso"

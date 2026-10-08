@@ -27,3 +27,10 @@ espera_bloqueo_segundos = 60
 
 [ejecucion]
 min_minutos_entre_ciclos = 30
+
+[mantenimiento]
+archivar_reportes_tras_dias = 14
+borrar_archivo_tras_dias = 0
+respaldo_cada_dias = 7
+respaldos_a_conservar = 8
+carpeta_respaldo = ""
