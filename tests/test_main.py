@@ -355,3 +355,64 @@ def test_un_ciclo_normal_no_muestra_pendientes_en_el_reporte(tmp_path):
     res = correr(tmp_path, [R1], FetcherFalso({R1.radicado: ok(act(1))}), Store(":memory:"), Reloj())
     resumen = {f[0] for f in load_workbook(res.reporte)["Resumen"].iter_rows(values_only=True)}
     assert "Pendientes por consultar" not in resumen
+
+
+def _capturar_fetcher(monkeypatch):
+    recibido = {}
+
+    class Captura:
+        def __init__(self, **k):
+            recibido.update(k)
+
+        def consultar(self, r):
+            return ok(act(1))
+
+        def pausar(self):
+            pass
+
+    monkeypatch.setattr(main_mod, "Fetcher", Captura)
+    return recibido
+
+
+def test_ejecutar_usa_los_valores_por_defecto_del_ritmo_y_del_bloqueo(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    recibido = _capturar_fetcher(monkeypatch)
+    assert main_mod.ejecutar(args) == 0
+    assert recibido["pausa_peticiones"] == 1.5
+    assert recibido["consultar_detalle"] is False
+    assert recibido["reintentos_bloqueo"] == 2
+    assert recibido["espera_bloqueo"] == 30
+
+
+def test_ejecutar_pasa_el_ritmo_y_el_bloqueo_de_la_configuracion(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace(
+            "max_fallas_ciclo = 0.5\n",
+            "max_fallas_ciclo = 0.5\npausa_peticiones_segundos = 3\nconsultar_detalle = true\n"
+            "reintentos_bloqueo = 1\nespera_bloqueo_segundos = 10\n",
+        ),
+        encoding="utf-8",
+    )
+    recibido = _capturar_fetcher(monkeypatch)
+    assert main_mod.ejecutar(args) == 0
+    assert (recibido["pausa_peticiones"], recibido["consultar_detalle"]) == (3, True)
+    assert (recibido["reintentos_bloqueo"], recibido["espera_bloqueo"]) == (1, 10)
+
+
+def test_ejecutar_devuelve_1_cuando_el_portal_bloquea(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+
+    class Bloquea:
+        def __init__(self, **k):
+            pass
+
+        def consultar(self, r):
+            return BLOQUEO
+
+        def pausar(self):
+            pass
+
+    monkeypatch.setattr(main_mod, "Fetcher", Bloquea)
+    assert main_mod.ejecutar(args) == 1

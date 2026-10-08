@@ -48,6 +48,12 @@ En el reporte, los radicados afectados aparecen como NO VERIFICADO, con el motiv
 Mientras tanto, vuelva a la consulta manual en el portal de la Rama Judicial y no confíe en los resultados de ese ciclo.
 Avise a quien mantiene la herramienta para que la ajuste.
 
+## Si el portal bloquea las consultas
+
+Si el portal de la Rama Judicial recibe muchas consultas seguidas, puede bloquearlas por un rato. En ese caso la herramienta se detiene de inmediato y muestra el mensaje "ALERTA: el portal bloqueó las consultas".
+El reporte de Excel trae lo consultado hasta ese momento, y en la hoja Resumen aparece cuántos radicados quedaron pendientes ("Pendientes por consultar"). El ciclo queda como "Pausado: el portal bloqueó las consultas".
+No hace falta hacer nada más que esperar el tiempo que indica el mensaje (30 minutos por defecto) y volver a lanzar la herramienta. Continuará sola desde donde quedó, sin repetir lo ya consultado.
+
 ## Limitaciones conocidas
 
 - Una decisión corregida en el Excel se ignora: solo cuenta la primera decisión registrada para cada alerta.

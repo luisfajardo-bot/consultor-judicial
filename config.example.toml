@@ -20,6 +20,10 @@ reintentos = 3
 espera_segundos = 2.0
 timeout_segundos = 30
 max_fallas_ciclo = 0.5
+pausa_peticiones_segundos = 1.5
+consultar_detalle = false
+reintentos_bloqueo = 2
+espera_bloqueo_segundos = 30
 
 [ejecucion]
 min_minutos_entre_ciclos = 30

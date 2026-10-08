@@ -191,6 +191,10 @@ def ejecutar(argv=None) -> int:
                 reintentos=portal["reintentos"],
                 espera=portal["espera_segundos"],
                 timeout=portal["timeout_segundos"],
+                pausa_peticiones=portal.get("pausa_peticiones_segundos", 1.5),
+                consultar_detalle=portal.get("consultar_detalle", False),
+                reintentos_bloqueo=portal.get("reintentos_bloqueo", 2),
+                espera_bloqueo=portal.get("espera_bloqueo_segundos", 30),
             )
             consola = sys.stdout.isatty()
             if consola:
