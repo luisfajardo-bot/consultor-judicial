@@ -33,10 +33,17 @@ schtasks /Create /TN "ConsultorJudicial" /TR "C:\consultor_judicial\scripts\ejec
 
 La cuenta debe tener permiso de lectura sobre el Excel de radicados y de escritura sobre `datos\` y `reportes\`.
 
+## Ejecutar a mano
+
+Doble clic en `scripts\ejecutar_ahora.bat`. Se ve una barra de avance con el radicado que se está consultando; no cierres la ventana. Al terminar, el reporte se abre en Excel.
+
+- Si ya hay una consulta en curso (por ejemplo la tarea programada), el programa lo dice, muestra su avance y no hace nada: el candado impide dos ciclos a la vez.
+- Si la última consulta terminó hace menos de 30 minutos, el programa lo dice y no hace nada, para no repetir consultas al portal. El límite se cambia en `config.toml`, sección `[ejecucion]`, con `min_minutos_entre_ciclos` (0 lo desactiva). Quien administra la herramienta puede saltarlo con `--forzar`.
+- Código de salida 3: no se ejecutó por candado o por el límite. Los demás: 0 completo, 1 detenido o con fallas, 2 error inesperado.
+
 ## Limitaciones conocidas
 
 - Una decisión corregida en el Excel se ignora: solo cuenta la primera decisión registrada para cada alerta.
-- No se deben lanzar dos ciclos a la vez (por ejemplo la tarea programada y una ejecución manual el mismo día).
 
 ## Pruebas
 
