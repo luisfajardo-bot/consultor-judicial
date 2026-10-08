@@ -13,6 +13,7 @@ No decide nada jurídico. El seguimiento manual sigue en paralelo.
 - [[Validación humana]]: cómo marca Alisson sus decisiones
 - [[Decisiones]]: qué se eligió y por qué
 - [[Operación y límites del portal]]: cuotas del portal, pausas, candado y alertas
+- [[Fase de escalamiento]]: lo aplazado, incluido el agente de lenguaje natural
 - [[Riesgos y pendientes]]
 
 ## Módulos
