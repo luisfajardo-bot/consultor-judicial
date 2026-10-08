@@ -120,3 +120,10 @@ def test_avisar_escribe_en_el_log(tmp_path, capsys):
     avisar("Ciclo 3 listo", archivo, AHORA)
     assert "2026-10-12 07:00:00 Ciclo 3 listo" in archivo.read_text(encoding="utf-8")
     assert "Ciclo 3 listo" in capsys.readouterr().out
+
+
+def test_caracteres_de_control_se_eliminan_en_vez_de_romper_el_reporte(tmp_path):
+    wb = load_workbook(escribir(tmp_path, [novedad(anotacion="Auto que\x0bdecreta pruebas")]))
+    hoja = wb["Alertas"]
+    enc = [c.value for c in hoja[1]]
+    assert hoja.cell(row=2, column=enc.index("Anotación detectada") + 1).value == "Auto quedecreta pruebas"

@@ -72,11 +72,11 @@ def correr_ciclo(
             fetcher.pausar()
 
     estado = "Detenido: fuente no disponible" if detenido else "Completo"
-    store.cerrar_ciclo(ciclo_id, estado, ahora())
     res = store.resumen(ciclo_id)
     ruta = escribir_reporte(
         store.filas_reporte(ciclo_id), {**res, "estado": estado}, carpeta_reportes, ciclo_id, ahora()
     )
+    store.cerrar_ciclo(ciclo_id, estado, ahora())
     avisar_fn(
         f"Ciclo {ciclo_id}: {res['total']} consultados, {res['exitosas']} exitosos, "
         f"{res['fallidas']} fallidos, {res['novedades']} posibles novedades. "

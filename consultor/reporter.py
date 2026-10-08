@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from .models import CONFIRMADA, DESCARTADA, NO_VERIFICADO, POSIBLE_NOVEDAD, SIN_CAMBIO
@@ -59,6 +60,7 @@ def _valores(f: dict) -> list:
 
 
 def _agregar(hoja, valores: list) -> None:
+    valores = [ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in valores]
     hoja.append(valores)
     for celda in hoja[hoja.max_row]:
         # un texto que empieza por "=" se guardaría como fórmula

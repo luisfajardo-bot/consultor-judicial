@@ -1,6 +1,7 @@
 import pytest
 from openpyxl import load_workbook
 
+import consultor.main as main_mod
 from consultor.main import MOTIVO_DETENIDO, correr_ciclo
 from consultor.models import FALLIDA, Consulta, Radicado
 from consultor.reporter import LEYENDA
@@ -118,3 +119,26 @@ def test_radicado_sin_resultados_queda_en_el_reporte_como_no_verificado(tmp_path
     assert filas[0][enc.index("Resultado")] == "NO VERIFICADO"
     assert filas[0][enc.index("Motivo")] == "sin resultados"
     assert (res.total, res.exitosas, res.fallidas) == (1, 0, 1)
+
+
+def test_si_falla_el_reporte_el_ciclo_queda_abierto_y_se_reanuda_sin_reconsultar(tmp_path, monkeypatch):
+    store, reloj = Store(":memory:"), Reloj()
+    f = FetcherFalso({R1.radicado: ok(act(1))})
+    correr(tmp_path, [R1], f, store, reloj)
+    reloj.avanzar()
+    f.respuestas = {R1.radicado: ok(act(2, texto="Auto"), act(1))}
+    original = main_mod.escribir_reporte
+
+    def falla(*a, **k):
+        raise RuntimeError("disco lleno")
+
+    monkeypatch.setattr(main_mod, "escribir_reporte", falla)
+    with pytest.raises(RuntimeError):
+        correr(tmp_path, [R1], f, store, reloj)
+    monkeypatch.setattr(main_mod, "escribir_reporte", original)
+    llamadas_antes = len(f.llamadas)
+    res = correr(tmp_path, [R1], f, store, reloj)
+    assert len(f.llamadas) == llamadas_antes  # no reconsulta
+    assert res.novedades == 1
+    enc, filas = hoja_alertas(res.reporte)
+    assert filas[0][enc.index("Resultado")] == "POSIBLE NOVEDAD"
