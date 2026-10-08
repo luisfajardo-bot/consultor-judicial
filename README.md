@@ -41,6 +41,13 @@ Doble clic en `scripts\ejecutar_ahora.bat`. Se ve una barra de avance con el rad
 - Si la última consulta terminó hace menos de 30 minutos, el programa lo dice y no hace nada, para no repetir consultas al portal. El límite se cambia en `config.toml`, sección `[ejecucion]`, con `min_minutos_entre_ciclos` (0 lo desactiva). Quien administra la herramienta puede saltarlo con `--forzar`.
 - Código de salida 3: no se ejecutó por candado o por el límite. Los demás: 0 completo, 1 detenido o con fallas, 2 error inesperado.
 
+## Si la API cambia
+
+La Rama Judicial no documenta su API y puede cambiarla sin aviso. Si pasa, la herramienta muestra el mensaje "ALERTA: la API de la Rama Judicial posiblemente cambió" y el ciclo termina como "Completo con alerta" o "Detenido: posible cambio en la API".
+En el reporte, los radicados afectados aparecen como NO VERIFICADO, con el motivo "respuesta inesperada".
+Mientras tanto, vuelva a la consulta manual en el portal de la Rama Judicial y no confíe en los resultados de ese ciclo.
+Avise a quien mantiene la herramienta para que la ajuste.
+
 ## Limitaciones conocidas
 
 - Una decisión corregida en el Excel se ignora: solo cuenta la primera decisión registrada para cada alerta.
