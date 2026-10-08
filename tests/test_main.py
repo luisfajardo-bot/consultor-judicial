@@ -1,7 +1,8 @@
 import pytest
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 import consultor.main as main_mod
+from consultor.bloqueo import Bloqueo
 from consultor.main import MOTIVO_DETENIDO, correr_ciclo
 from consultor.models import FALLIDA, Consulta, Radicado
 from consultor.reporter import LEYENDA
@@ -190,3 +191,67 @@ def test_el_progreso_se_informa_por_cada_radicado(tmp_path):
     visto = []
     correr(tmp_path, rs, f, Store(":memory:"), Reloj(), progreso=lambda hecho, total, rad: visto.append((hecho, total, rad)))
     assert visto == [(1, 3, rs[0].radicado), (2, 3, rs[1].radicado), (3, 3, rs[2].radicado)]
+
+
+def preparar(tmp_path, monkeypatch, minutos=30):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "GENERAL"
+    ws.append(["Radicado"])
+    ws.append([R1.radicado])
+    wb.save(tmp_path / "x.xlsx")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        f'[fuente]\ntipo = "excel"\nruta = "{(tmp_path / "x.xlsx").as_posix()}"\nhoja = "GENERAL"\ncol_radicado = "Radicado"\n'
+        f'[salida]\nbase_datos = "{(tmp_path / "datos" / "c.db").as_posix()}"\n'
+        f'carpeta_reportes = "{(tmp_path / "reportes").as_posix()}"\nvalidador = "Alisson"\n'
+        '[portal]\npausa_segundos = 0\nreintentos = 1\nespera_segundos = 0\ntimeout_segundos = 5\nmax_fallas_ciclo = 0.5\n'
+        f'[ejecucion]\nmin_minutos_entre_ciclos = {minutos}\n',
+        encoding="utf-8",
+    )
+
+    class Falso:
+        def __init__(self, **k):
+            pass
+
+        def consultar(self, r):
+            return ok(act(1))
+
+        def pausar(self):
+            pass
+
+    monkeypatch.setattr(main_mod, "Fetcher", Falso)
+    return ["run", "--config", str(cfg)]
+
+
+def test_un_segundo_intento_seguido_es_rechazado_con_mensaje_claro(tmp_path, monkeypatch, capsys):
+    args = preparar(tmp_path, monkeypatch)
+    assert main_mod.ejecutar(args) == 0
+    assert main_mod.ejecutar(args) == 3
+    assert "espera hasta las" in capsys.readouterr().out
+
+
+def test_forzar_salta_el_limite(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    assert main_mod.ejecutar(args) == 0
+    assert main_mod.ejecutar(args + ["--forzar"]) == 0
+
+
+def test_con_limite_en_cero_no_rechaza(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch, minutos=0)
+    assert main_mod.ejecutar(args) == 0
+    assert main_mod.ejecutar(args) == 0
+
+
+def test_si_hay_otro_ciclo_corriendo_se_rechaza_y_dice_su_avance(tmp_path, monkeypatch, capsys):
+    args = preparar(tmp_path, monkeypatch)
+    with Bloqueo(tmp_path / "datos") as b:
+        b.publicar("06:30 | 12 de 44")
+        assert main_mod.ejecutar(args) == 3
+    assert "12 de 44" in capsys.readouterr().out
+
+
+def test_solo_radicado_no_cuenta_para_el_limite(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    assert main_mod.ejecutar(args + ["--solo-radicado", R1.radicado]) == 0
+    assert main_mod.ejecutar(args) == 0  # no fue rechazado

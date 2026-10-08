@@ -20,3 +20,6 @@ reintentos = 3
 espera_segundos = 2.0
 timeout_segundos = 30
 max_fallas_ciclo = 0.5
+
+[ejecucion]
+min_minutos_entre_ciclos = 30
