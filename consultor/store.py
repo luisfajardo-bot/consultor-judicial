@@ -87,12 +87,17 @@ class Store:
 
     # ciclos
     def iniciar_ciclo(self, ahora: datetime, parcial: bool = False) -> int:
-        """Continúa el ciclo abierto del mismo día si existe (reanudación)."""
+        """Continúa el ciclo abierto o pausado del mismo día si existe (reanudación)."""
         fila = self.con.execute(
-            "SELECT id FROM ciclo WHERE estado = 'En curso' AND substr(inicio, 1, 10) = ? AND parcial = ?",
+            "SELECT id FROM ciclo WHERE (estado = 'En curso' OR estado LIKE 'Pausado%') "
+            "AND substr(inicio, 1, 10) = ? AND parcial = ?",
             (ahora.date().isoformat(), int(parcial)),
         ).fetchone()
         if fila:
+            with self.con:
+                self.con.execute(
+                    "UPDATE ciclo SET estado = 'En curso', fin = NULL WHERE id = ?", (fila["id"],)
+                )
             return fila["id"]
         with self.con:
             cur = self.con.execute(
@@ -106,10 +111,17 @@ class Store:
         with self.con:
             cur = self.con.execute(
                 "UPDATE ciclo SET estado = 'Interrumpido', fin = ? "
-                "WHERE estado = 'En curso' AND substr(inicio, 1, 10) <> ?",
+                "WHERE (estado = 'En curso' OR estado LIKE 'Pausado%') AND substr(inicio, 1, 10) <> ?",
                 (_iso(ahora), ahora.date().isoformat()),
             )
         return cur.rowcount
+
+    def pendientes(self, ciclo_id: int, total: int) -> int:
+        """Radicados de la lista que aún no tienen consulta registrada en el ciclo."""
+        n = self.con.execute(
+            "SELECT COUNT(*) FROM consulta WHERE ciclo_id = ?", (ciclo_id,)
+        ).fetchone()[0]
+        return total - n
 
     def ultimo_cierre(self) -> datetime | None:
         f = self.con.execute("SELECT MAX(fin) AS fin FROM ciclo WHERE fin IS NOT NULL AND parcial = 0").fetchone()

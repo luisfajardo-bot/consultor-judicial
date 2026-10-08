@@ -236,3 +236,37 @@ def test_base_sin_columna_parcial_se_migra(tmp_path):
     con.close()
     s = Store(ruta)
     assert s.ultimo_cierre() == datetime(2026, 10, 1, 7, 5, 0)
+
+
+def test_un_ciclo_pausado_del_mismo_dia_se_reanuda_en_curso(store):
+    a = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(a, "Pausado: el portal bloqueó las consultas", AHORA + timedelta(minutes=3))
+    assert store.iniciar_ciclo(AHORA + timedelta(minutes=40)) == a
+    f = store.con.execute("SELECT estado, fin FROM ciclo WHERE id = ?", (a,)).fetchone()
+    assert f["estado"] == "En curso" and f["fin"] is None
+
+
+def test_un_ciclo_pausado_respeta_el_filtro_parcial(store):
+    a = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(a, "Pausado: x", AHORA)
+    assert store.iniciar_ciclo(AHORA, parcial=True) != a
+
+
+def test_un_ciclo_pausado_de_ayer_pasa_a_interrumpido(store):
+    a = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(a, "Pausado: x", AHORA)
+    assert store.cerrar_interrumpidos(AHORA + timedelta(days=1)) == 1
+    assert store.con.execute("SELECT estado FROM ciclo WHERE id = ?", (a,)).fetchone()[0] == "Interrumpido"
+
+
+def test_pendientes_resta_las_consultas_registradas(store):
+    c = store.iniciar_ciclo(AHORA)
+    assert store.pendientes(c, 5) == 5
+    store.registrar_resultado(c, R.radicado, ok(act(1)), Veredicto(SIN_CAMBIO), "", AHORA)
+    assert store.pendientes(c, 5) == 4
+
+
+def test_un_ciclo_pausado_cuenta_para_el_ultimo_cierre(store):
+    a = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(a, "Pausado: x", AHORA + timedelta(minutes=2))
+    assert store.ultimo_cierre() == AHORA + timedelta(minutes=2)
