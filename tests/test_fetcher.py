@@ -271,3 +271,63 @@ def test_proceso_sin_id_proceso_es_error():
 def test_busqueda_con_cuerpo_lista_es_error():
     c = _busqueda_con([])
     assert c.estado == ERROR
+
+
+def crear_con(rutas, **kw):
+    dormidos = []
+    sesion = SesionFalsa(rutas)
+    f = Fetcher(sesion=sesion, pausa=1.0, reintentos=3, espera=2.0, dormir=dormidos.append, **kw)
+    return f, sesion, dormidos
+
+
+def test_pausa_entre_peticiones_no_espera_antes_de_la_primera():
+    f, sesion, dormidos = crear_con(rutas_ok(), pausa_peticiones=1.5)
+    assert f.consultar(RAD).estado == EXITOSA
+    assert len(sesion.llamadas) == 3
+    assert dormidos == [1.5, 1.5]
+
+
+def test_sin_consultar_detalle_no_pide_detalle():
+    f, sesion, _ = crear_con(rutas_ok(), consultar_detalle=False)
+    c = f.consultar(RAD)
+    assert c.estado == EXITOSA and c.ultima_actualizacion == ""
+    assert not any("Detalle" in u for u, _ in sesion.llamadas)
+
+
+def test_403_persistente_es_bloqueo_con_esperas_largas():
+    rutas = rutas_ok()
+    rutas["NumeroRadicacion"] = [RespuestaFalsa(403)] * 3
+    f, sesion, dormidos = crear_con(rutas)
+    c = f.consultar(RAD)
+    assert c.estado == FALLIDA
+    assert c.bloqueo is True and c.falla_portal is True
+    assert c.motivo == "HTTP 403: el portal bloqueó las consultas"
+    assert dormidos == [30.0, 60.0]
+    assert len([u for u, _ in sesion.llamadas if "NumeroRadicacion" in u]) == 3
+
+
+def test_403_que_se_recupera_devuelve_exito():
+    rutas = rutas_ok()
+    rutas["NumeroRadicacion"] = [RespuestaFalsa(403), RespuestaFalsa(200, BUSQUEDA)]
+    f, _, dormidos = crear_con(rutas)
+    c = f.consultar(RAD)
+    assert c.estado == EXITOSA and c.bloqueo is False
+    assert dormidos == [30.0]
+
+
+def test_429_se_trata_como_bloqueo():
+    rutas = rutas_ok()
+    rutas["NumeroRadicacion"] = [RespuestaFalsa(429)] * 3
+    f, _, dormidos = crear_con(rutas)
+    c = f.consultar(RAD)
+    assert c.bloqueo is True
+    assert c.motivo.startswith("HTTP 429")
+    assert dormidos == [30.0, 60.0]
+
+
+def test_403_solo_en_el_detalle_tambien_es_bloqueo():
+    rutas = rutas_ok()
+    rutas["Detalle"] = [RespuestaFalsa(403)] * 3
+    f, _, _ = crear_con(rutas, consultar_detalle=True)
+    c = f.consultar(RAD)
+    assert c.bloqueo is True and c.estado == FALLIDA

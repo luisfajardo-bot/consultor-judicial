@@ -15,6 +15,14 @@ class ErrorPortal(Exception):
     """El portal no respondió bien tras agotar los reintentos."""
 
 
+class BloqueoPortal(ErrorPortal):
+    """El portal respondió 403 o 429 de forma persistente: bloqueo temporal por ritmo."""
+
+    def __init__(self, codigo):
+        super().__init__(f"HTTP {codigo}")
+        self.codigo = codigo
+
+
 def _fecha(valor) -> str:
     return (valor or "")[:10]
 
@@ -47,6 +55,10 @@ class Fetcher:
         espera=2.0,
         timeout=30,
         dormir=time.sleep,
+        pausa_peticiones=0.0,
+        consultar_detalle=True,
+        reintentos_bloqueo=2,
+        espera_bloqueo=30.0,
     ):
         if sesion is None:
             sesion = requests.Session()
@@ -57,19 +69,39 @@ class Fetcher:
         self.espera = espera
         self.timeout = timeout
         self.dormir = dormir
+        self.pausa_peticiones = pausa_peticiones
+        self.consultar_detalle = consultar_detalle
+        self.reintentos_bloqueo = reintentos_bloqueo
+        self.espera_bloqueo = espera_bloqueo
+        self._hubo_peticion = False
 
     def pausar(self) -> None:
         self.dormir(self.pausa)
 
+    def _pedir(self, url, params):
+        """Un GET; espera pausa_peticiones antes de todos salvo el primero."""
+        if self._hubo_peticion and self.pausa_peticiones > 0:
+            self.dormir(self.pausa_peticiones)
+        self._hubo_peticion = True
+        return self.sesion.get(url, params=params, timeout=self.timeout)
+
     def _get(self, url, params=None):
-        """GET con reintentos y espera creciente. Un 404 no se reintenta."""
+        """GET con reintentos y espera creciente. Un 404 no se reintenta; 403/429 es bloqueo."""
         motivo = ""
-        for intento in range(self.reintentos):
+        bloqueos = 0
+        intento = 0
+        while intento < self.reintentos:
             try:
-                resp = self.sesion.get(url, params=params, timeout=self.timeout)
+                resp = self._pedir(url, params)
             except requests.RequestException as e:
                 motivo = type(e).__name__
             else:
+                if resp.status_code in (403, 429):
+                    if bloqueos >= self.reintentos_bloqueo:
+                        raise BloqueoPortal(resp.status_code)
+                    self.dormir(self.espera_bloqueo * (2**bloqueos))
+                    bloqueos += 1
+                    continue
                 if resp.status_code == 404:
                     try:
                         return 404, resp.json()
@@ -84,6 +116,7 @@ class Fetcher:
                     motivo = f"HTTP {resp.status_code}"
             if intento < self.reintentos - 1:
                 self.dormir(self.espera * (2**intento))
+            intento += 1
         raise ErrorPortal(motivo)
 
     def _actuaciones(self, id_proceso, radicado) -> list[Actuacion]:
@@ -110,6 +143,8 @@ class Fetcher:
     def _ultima_actualizacion(self, id_proceso) -> str:
         try:
             estado, datos = self._get(f"{BASE}/Proceso/Detalle/{id_proceso}")
+        except BloqueoPortal:
+            raise
         except ErrorPortal:
             return ""
         if estado != 200 or not isinstance(datos, dict):
@@ -139,8 +174,17 @@ class Fetcher:
                 EXITOSA,
                 id_proceso=id_proceso,
                 despacho=(primero.get("despacho") or "").strip(),
-                ultima_actualizacion=self._ultima_actualizacion(id_proceso),
+                ultima_actualizacion=(
+                    self._ultima_actualizacion(id_proceso) if self.consultar_detalle else ""
+                ),
                 actuaciones=tuple(vistas.values()),
+            )
+        except BloqueoPortal as e:
+            return Consulta(
+                FALLIDA,
+                motivo=f"HTTP {e.codigo}: el portal bloqueó las consultas",
+                falla_portal=True,
+                bloqueo=True,
             )
         except ErrorPortal as e:
             return Consulta(FALLIDA, motivo=str(e), falla_portal=True)

@@ -40,6 +40,7 @@ class Consulta:
     estado: str
     motivo: str = ""
     falla_portal: bool = False
+    bloqueo: bool = False
     id_proceso: int | None = None
     despacho: str = ""
     ultima_actualizacion: str = ""
