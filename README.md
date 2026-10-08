@@ -52,6 +52,20 @@ Doble clic en `scripts\abrir_panel.bat`. Se abre una ventana que muestra:
 
 Si ya hay otra consulta corriendo (por ejemplo la programada de las 9:00), el botón **Consultar ahora** queda desactivado y la barra muestra su avance. Cuando aparece "Sin avance hace N min", casi siempre es el portal pidiendo esperar: no hay que hacer nada, la consulta sigue sola. La ventana no envía datos a ningún sitio: solo lee los archivos de esta carpeta.
 
+## Reportes antiguos y copias de seguridad
+
+Al terminar cada consulta la herramienta hace dos tareas de orden, sin que nadie tenga que hacer nada.
+
+**Reportes antiguos.** Los reportes con más de 14 días se mueven (no se borran) a `reportes\archivo\AAAA-MM\`. El reporte para validar es siempre el más reciente, que nunca se archiva: las alertas pendientes reaparecen ahí en cada consulta nueva. Marcar una decisión en un reporte archivado no se importa, así que hay que decidir en el más reciente. Si un reporte está abierto en Excel no se mueve y se reintenta en la siguiente consulta.
+
+**Copias de seguridad de la base de datos.** Cada 7 días se guarda una copia en `datos\respaldo\` (archivos `consultor_AAAA-MM-DD.db`) y se conservan las 8 más recientes. Cada copia se verifica al crearla.
+
+**Cómo restaurar una copia.** Cerrar todo (la ventana y cualquier consulta en curso), elegir el respaldo que se quiere y copiarlo sobre `datos\consultor.db`.
+
+**Borrado de archivados.** La opción de borrar reportes archivados existe, pero está apagada (`borrar_archivo_tras_dias = 0` en `config.toml`, sección `[mantenimiento]`). Se activará cuando la Gerencia Jurídica decida el plazo de conservación.
+
+Si algo falla en estas tareas, la consulta no se afecta: queda un aviso en `reportes\avisos.log`.
+
 ## Si la API cambia
 
 La Rama Judicial no documenta su API y puede cambiarla sin aviso. Si pasa, la herramienta muestra el mensaje "ALERTA: la API de la Rama Judicial posiblemente cambió" y el ciclo termina como "Completo con alerta" o "Detenido: posible cambio en la API".
