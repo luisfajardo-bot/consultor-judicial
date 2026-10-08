@@ -27,10 +27,10 @@ class FetcherFalso:
         pass
 
 
-def correr(tmp_path, radicados, fetcher, store, reloj, avisos=None, max_fallas=0.5):
+def correr(tmp_path, radicados, fetcher, store, reloj, avisos=None, max_fallas=0.5, progreso=None):
     avisos = [] if avisos is None else avisos
     return correr_ciclo(
-        radicados, fetcher, store, tmp_path, "Alisson Rengifo", max_fallas, avisos.append, reloj
+        radicados, fetcher, store, tmp_path, "Alisson Rengifo", max_fallas, avisos.append, reloj, progreso
     )
 
 
@@ -182,3 +182,11 @@ def test_lista_vacia_avisa_y_no_es_completo(tmp_path):
     assert res.estado == "Lista vacía"
     assert res.reporte is None
     assert any("vacía" in a for a in avisos)
+
+
+def test_el_progreso_se_informa_por_cada_radicado(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 4)]
+    f = FetcherFalso({r.radicado: ok(act(1)) for r in rs})
+    visto = []
+    correr(tmp_path, rs, f, Store(":memory:"), Reloj(), progreso=lambda hecho, total, rad: visto.append((hecho, total, rad)))
+    assert visto == [(1, 3, rs[0].radicado), (2, 3, rs[1].radicado), (3, 3, rs[2].radicado)]

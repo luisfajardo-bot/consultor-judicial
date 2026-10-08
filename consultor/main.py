@@ -30,7 +30,7 @@ class Resumen:
 
 
 def correr_ciclo(
-    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now
+    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None
 ) -> Resumen:
     if not radicados:
         avisar_fn(
@@ -51,8 +51,8 @@ def correr_ciclo(
     store.registrar_radicados(radicados)
     for i, r in enumerate(radicados):
         if store.ya_consultado(ciclo_id, r.radicado):
-            continue
-        if detenido:
+            pass
+        elif detenido:
             store.registrar_resultado(
                 ciclo_id,
                 r.radicado,
@@ -61,24 +61,26 @@ def correr_ciclo(
                 "",
                 ahora(),
             )
-            continue
-        consulta = fetcher.consultar(r)
-        veredicto = comparar(
-            consulta, store.ids_conocidos(r.radicado), store.tiene_referencia(r.radicado)
-        )
-        store.registrar_resultado(
-            ciclo_id, r.radicado, consulta, veredicto, store.ultima_actuacion(r.radicado), ahora()
-        )
-        consultados += 1
-        fallas += consulta.falla_portal
-        if consultados >= MIN_MUESTRA and fallas / consultados > max_fallas:  # R5
-            detenido = True
-            avisar_fn(
-                f"Fuente no disponible: fallaron {fallas} de {consultados} consultas. "
-                "Ciclo detenido, activar consulta manual."
+        else:
+            consulta = fetcher.consultar(r)
+            veredicto = comparar(
+                consulta, store.ids_conocidos(r.radicado), store.tiene_referencia(r.radicado)
             )
-        elif i < ultimo:
-            fetcher.pausar()
+            store.registrar_resultado(
+                ciclo_id, r.radicado, consulta, veredicto, store.ultima_actuacion(r.radicado), ahora()
+            )
+            consultados += 1
+            fallas += consulta.falla_portal
+            if consultados >= MIN_MUESTRA and fallas / consultados > max_fallas:  # R5
+                detenido = True
+                avisar_fn(
+                    f"Fuente no disponible: fallaron {fallas} de {consultados} consultas. "
+                    "Ciclo detenido, activar consulta manual."
+                )
+            elif i < ultimo:
+                fetcher.pausar()
+        if progreso:
+            progreso(i + 1, len(radicados), r.radicado)
 
     fuente_caida = consultados > 0 and fallas / consultados > max_fallas
     if detenido:
