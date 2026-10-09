@@ -2,11 +2,13 @@ import os
 import time
 from datetime import datetime, timedelta
 
+from consultor.bloqueo import Bloqueo
 from consultor.models import SIN_CAMBIO, Radicado, Veredicto
 from consultor.panel import (
     Avance,
     leer_avance,
     resumen_ultimo_ciclo,
+    solicitar_cancelacion,
     texto_avance,
     texto_resumen,
     ultimo_reporte,
@@ -26,17 +28,32 @@ def test_leer_avance_sin_archivo_es_none(tmp_path):
 
 
 def test_leer_avance_interpreta_el_estado_y_los_segundos_sin_avance(tmp_path):
-    ruta = tmp_path / "estado.txt"
-    ruta.write_text("09:00 | 12 de 44", encoding="utf-8")
-    ahora = ruta.stat().st_mtime + 150
-    a = leer_avance(tmp_path, ahora=ahora)
+    with Bloqueo(tmp_path) as b:
+        b.publicar("09:00 | 12 de 44")
+        ahora = (tmp_path / "estado.txt").stat().st_mtime + 150
+        a = leer_avance(tmp_path, ahora=ahora)
     assert (a.hecho, a.total, a.hora_inicio) == (12, 44, "09:00")
     assert round(a.segundos_sin_avance) == 150
 
 
 def test_leer_avance_con_texto_ilegible_es_none(tmp_path):
-    (tmp_path / "estado.txt").write_text("basura", encoding="utf-8")
+    with Bloqueo(tmp_path) as b:
+        b.publicar("basura")
+        assert leer_avance(tmp_path) is None
+
+
+def test_un_estado_sin_candado_es_un_resto_viejo_y_se_ignora(tmp_path):
+    (tmp_path / "estado.txt").write_text("09:00 | 1 de 41", encoding="utf-8")
     assert leer_avance(tmp_path) is None
+    assert not (tmp_path / "estado.txt").exists()
+
+
+def test_solicitar_cancelacion_solo_actua_si_hay_un_ciclo_corriendo(tmp_path):
+    assert solicitar_cancelacion(tmp_path) is False
+    assert not (tmp_path / "cancelar.txt").exists()
+    with Bloqueo(tmp_path):
+        assert solicitar_cancelacion(tmp_path) is True
+        assert (tmp_path / "cancelar.txt").exists()
 
 
 def test_ultimo_reporte_elige_el_de_mayor_numero_e_ignora_temporales(tmp_path):

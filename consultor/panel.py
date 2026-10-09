@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .bloqueo import ciclo_en_curso
+
 ESTADO_RE = re.compile(r"(\d{1,2}:\d{2})\s*\|\s*(\d+) de (\d+)")
 SIN_AVANCE_SEG = 90
 
@@ -31,6 +33,8 @@ class ResumenCiclo:
 
 
 def leer_avance(carpeta_datos, ahora=None) -> Avance | None:
+    if not ciclo_en_curso(carpeta_datos):  # sin candado, estado.txt es un resto viejo
+        return None
     ruta = Path(carpeta_datos) / "estado.txt"
     try:
         texto = ruta.read_text(encoding="utf-8")
@@ -42,6 +46,14 @@ def leer_avance(carpeta_datos, ahora=None) -> Avance | None:
         return None
     ahora = time.time() if ahora is None else ahora
     return Avance(int(m.group(2)), int(m.group(3)), max(0.0, ahora - modificado), m.group(1))
+
+
+def solicitar_cancelacion(carpeta_datos) -> bool:
+    """Pide al ciclo en marcha que se detenga. False si no hay ninguno corriendo."""
+    if not ciclo_en_curso(carpeta_datos):
+        return False
+    (Path(carpeta_datos) / "cancelar.txt").write_text(f"{datetime.now():%H:%M:%S}", encoding="utf-8")
+    return True
 
 
 def resumen_ultimo_ciclo(store) -> ResumenCiclo | None:
