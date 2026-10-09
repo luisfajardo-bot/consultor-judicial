@@ -5,6 +5,7 @@ from openpyxl import Workbook, load_workbook
 
 import consultor.main as main_mod
 from consultor.bloqueo import Bloqueo
+from consultor.fetcher import CicloCancelado
 from consultor.main import MOTIVO_DETENIDO, correr_ciclo
 from consultor.models import ERROR, FALLIDA, Consulta, Radicado
 from consultor.reporter import LEYENDA
@@ -454,6 +455,83 @@ def test_ejecutar_ciclo_publica_el_avance_en_estado_txt_mientras_corre(tmp_path,
         (tmp_path / "datos" / "estado.txt").read_text(encoding="utf-8")))
     assert visto and "1 de 1" in visto[0]
     assert not (tmp_path / "datos" / "estado.txt").exists()  # se borra al terminar
+
+
+# cancelar un ciclo
+
+def cancelar_tras(fetcher, n):
+    return lambda: len(fetcher.llamadas) >= n
+
+
+def test_cancelar_detiene_el_ciclo_conserva_lo_hecho_y_deja_pendientes(tmp_path):
+    rs, avisos = cinco(), []
+    f = FetcherFalso({r.radicado: ok(act(1)) for r in rs})
+    res = correr_ciclo(
+        rs, f, Store(":memory:"), tmp_path, "A", 0.5, avisos.append, Reloj(), cancelado=cancelar_tras(f, 2)
+    )
+    assert len(f.llamadas) == 2
+    assert res.estado == "Cancelado por el usuario"
+    assert res.pendientes == 3 and res.total == 2
+    aviso = [a for a in avisos if "cancelada" in a]
+    assert len(aviso) == 1 and "Quedan 3" in aviso[0] and "después de 2 radicados" in aviso[0]
+    assert res.reporte.exists()
+
+
+def test_tras_cancelar_se_reanuda_con_los_restantes_sin_esperar_el_limite(tmp_path):
+    rs, store, reloj = cinco(), Store(":memory:"), Reloj()
+    f1 = FetcherFalso({r.radicado: ok(act(1)) for r in rs})
+    r1 = correr_ciclo(
+        rs, f1, store, tmp_path, "A", 0.5, [].append, reloj, cancelado=cancelar_tras(f1, 2)
+    )
+    assert store.ultimo_cierre() is None  # cancelar a propósito no impone la espera de 30 minutos
+    f2 = FetcherFalso({r.radicado: ok(act(1)) for r in rs[2:]})
+    r2 = correr(tmp_path, rs, f2, store, reloj)
+    assert f2.llamadas == [r.radicado for r in rs[2:]]
+    assert r2.ciclo_id == r1.ciclo_id
+    assert r2.estado == "Completo" and r2.total == 5 and r2.pendientes == 0
+
+
+def test_un_radicado_cancelado_a_mitad_no_se_registra_y_se_consulta_al_reanudar(tmp_path):
+    rs, store, reloj = cinco(), Store(":memory:"), Reloj()
+    resp = {r.radicado: ok(act(1)) for r in rs}
+    resp[rs[2].radicado] = CicloCancelado()
+    f1 = FetcherFalso(resp)
+    avisos = []
+    r1 = correr_ciclo(rs, f1, store, tmp_path, "A", 0.5, avisos.append, reloj)
+    assert r1.estado == "Cancelado por el usuario" and r1.total == 2 and r1.pendientes == 3
+    assert any("Quedan 3" in a for a in avisos)
+    f2 = FetcherFalso({r.radicado: ok(act(1)) for r in rs[2:]})
+    r2 = correr(tmp_path, rs, f2, store, reloj)
+    assert f2.llamadas == [r.radicado for r in rs[2:]]
+    assert r2.estado == "Completo" and r2.total == 5
+
+
+def test_una_peticion_vieja_de_cancelar_no_cancela_un_ciclo_nuevo(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    (tmp_path / "datos").mkdir()
+    (tmp_path / "datos" / "cancelar.txt").write_text("viejo", encoding="utf-8")
+    e = main_mod.ejecutar_ciclo(cfg)
+    assert e.codigo == 0 and e.resumen.estado == "Completo"
+    assert not (tmp_path / "datos" / "cancelar.txt").exists()
+
+
+def test_crear_cancelar_txt_durante_el_ciclo_lo_cancela(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "GENERAL"
+    ws.append(["Radicado"])
+    for r in cinco():
+        ws.append([r.radicado])
+    wb.save(tmp_path / "x.xlsx")
+    e = main_mod.ejecutar_ciclo(
+        cfg, progreso=lambda h, t, r: (tmp_path / "datos" / "cancelar.txt").write_text("x", encoding="utf-8")
+    )
+    assert e.codigo == 1
+    assert e.resumen.estado == "Cancelado por el usuario" and e.resumen.pendientes == 4
+    assert not (tmp_path / "datos" / "cancelar.txt").exists()
 
 
 # mantenimiento al final del ciclo

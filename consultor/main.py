@@ -3,6 +3,7 @@ import os
 import sys
 import tomllib
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 from .bloqueo import Bloqueo, CicloEnCurso
 from .comparator import comparar
 from .consola import barra
-from .fetcher import Fetcher
+from .fetcher import CicloCancelado, Fetcher
 from .loader import crear_fuente
 from .mantenimiento import archivar_reportes, borrar_archivo_antiguo, respaldar_base
 from .models import ERROR, FALLIDA, NO_VERIFICADO, Consulta, Veredicto
@@ -21,6 +22,7 @@ from .store import Store
 # seguidos al inicio no detengan un ciclo de 44 radicados.
 MIN_MUESTRA = 10
 MOTIVO_DETENIDO = "ciclo detenido: fuente no disponible"
+ESTADO_CANCELADO = "Cancelado por el usuario"
 ESTADO_PAUSADO = "Pausado: el portal bloqueó las consultas"
 
 
@@ -37,7 +39,7 @@ class Resumen:
 
 
 def correr_ciclo(
-    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30
+    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30, cancelado=None
 ) -> Resumen:
     if not radicados:
         avisar_fn(
@@ -53,10 +55,22 @@ def correr_ciclo(
         avisar_fn(f"{interrumpidos} ciclo(s) anterior(es) quedaron interrumpido(s). Sus alertas pendientes siguen en el reporte.")
     ciclo_id = store.iniciar_ciclo(ahora(), parcial)
     consultados = fallas = cambios_api = 0
-    detenido = bloqueado = False
+    detenido = bloqueado = cancelo = False
     ultimo = len(radicados) - 1
     store.registrar_radicados(radicados)
+
+    def avisar_cancelado():
+        pendientes = store.pendientes(ciclo_id, len(radicados))
+        avisar_fn(
+            f"Consulta cancelada por el usuario después de {len(radicados) - pendientes} radicados. "
+            f"Quedan {pendientes} sin consultar. Puede continuar más tarde y seguirá desde ahí."
+        )
+
     for i, r in enumerate(radicados):
+        if cancelado and cancelado():
+            cancelo = True
+            avisar_cancelado()
+            break
         if store.ya_consultado(ciclo_id, r.radicado):
             pass
         elif detenido:
@@ -69,7 +83,12 @@ def correr_ciclo(
                 ahora(),
             )
         else:
-            consulta = fetcher.consultar(r)
+            try:
+                consulta = fetcher.consultar(r)
+            except CicloCancelado:  # el radicado en vuelo no se registra: se consulta al reanudar
+                cancelo = True
+                avisar_cancelado()
+                break
             if consulta.bloqueo:  # no se registra: se reintenta al reanudar
                 bloqueado = True
                 pendientes = store.pendientes(ciclo_id, len(radicados))
@@ -107,7 +126,9 @@ def correr_ciclo(
             "consultas devolvieron una respuesta con una forma inesperada. "
             "Revisar la herramienta y usar la consulta manual mientras tanto."
         )
-    if bloqueado:
+    if cancelo:
+        estado = ESTADO_CANCELADO
+    elif bloqueado:
         estado = ESTADO_PAUSADO
     elif detenido and cambios_api:
         estado = "Detenido: posible cambio en la API"
@@ -124,7 +145,7 @@ def correr_ciclo(
     else:
         estado = "Completo"
     res = store.resumen(ciclo_id)
-    pendientes = store.pendientes(ciclo_id, len(radicados)) if bloqueado else 0
+    pendientes = store.pendientes(ciclo_id, len(radicados)) if bloqueado or cancelo else 0
     ruta = escribir_reporte(
         store.filas_reporte(ciclo_id),
         {**res, "estado": estado, "pendientes": pendientes},
@@ -182,6 +203,16 @@ def _mantenimiento(cfg, store, avisar_fn, hoy) -> None:
         avisar_fn(f"Mantenimiento: falló el respaldo de la base de datos ({type(e).__name__}: {e})")
 
 
+@contextmanager
+def _sin_cancelar(ruta):
+    """Una petición de cancelar vieja no cancela un ciclo nuevo; la actual se borra al terminar."""
+    ruta.unlink(missing_ok=True)
+    try:
+        yield
+    finally:
+        ruta.unlink(missing_ok=True)
+
+
 def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avisar_fn=None) -> Ejecucion:
     """Un ciclo con candado, límite entre ejecuciones y avance publicado. No imprime.
 
@@ -195,10 +226,11 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
         if avisar_fn:
             avisar_fn(texto)
 
+    ruta_cancelar = Path(cfg["salida"]["base_datos"]).parent / "cancelar.txt"
     minimo = cfg.get("ejecucion", {}).get("min_minutos_entre_ciclos", 30)
     inicio = datetime.now()
     try:
-        with Bloqueo(Path(cfg["salida"]["base_datos"]).parent) as bloqueo:
+        with Bloqueo(Path(cfg["salida"]["base_datos"]).parent) as bloqueo, _sin_cancelar(ruta_cancelar):
             store = Store(cfg["salida"]["base_datos"])
             ultimo = store.ultimo_cierre()
             if not (forzar or solo_radicado) and ultimo:
@@ -216,6 +248,7 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
             if solo_radicado:
                 radicados = [r for r in radicados if r.radicado == solo_radicado]
             portal = cfg["portal"]
+            cancelado = ruta_cancelar.exists
             fetcher = Fetcher(
                 pausa=portal["pausa_segundos"],
                 reintentos=portal["reintentos"],
@@ -225,6 +258,7 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                 consultar_detalle=portal.get("consultar_detalle", False),
                 reintentos_bloqueo=portal.get("reintentos_bloqueo", 3),
                 espera_bloqueo=portal.get("espera_bloqueo_segundos", 60),
+                cancelado=cancelado,
             )
 
             def avance(hecho, total, radicado):
@@ -243,6 +277,7 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                 progreso=avance,
                 parcial=bool(solo_radicado),
                 min_minutos=minimo,
+                cancelado=cancelado,
             )
             _mantenimiento(cfg, store, aviso, datetime.now().date())
     except CicloEnCurso as e:

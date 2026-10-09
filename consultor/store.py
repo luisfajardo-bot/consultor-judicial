@@ -89,7 +89,7 @@ class Store:
     def iniciar_ciclo(self, ahora: datetime, parcial: bool = False) -> int:
         """Continúa el ciclo abierto o pausado del mismo día si existe (reanudación)."""
         fila = self.con.execute(
-            "SELECT id FROM ciclo WHERE (estado = 'En curso' OR estado LIKE 'Pausado%') "
+            "SELECT id FROM ciclo WHERE (estado = 'En curso' OR estado LIKE 'Pausado%' OR estado LIKE 'Cancelado%') "
             "AND substr(inicio, 1, 10) = ? AND parcial = ?",
             (ahora.date().isoformat(), int(parcial)),
         ).fetchone()
@@ -111,7 +111,8 @@ class Store:
         with self.con:
             cur = self.con.execute(
                 "UPDATE ciclo SET estado = 'Interrumpido', fin = ? "
-                "WHERE (estado = 'En curso' OR estado LIKE 'Pausado%') AND substr(inicio, 1, 10) <> ?",
+                "WHERE (estado = 'En curso' OR estado LIKE 'Pausado%' OR estado LIKE 'Cancelado%') "
+                "AND substr(inicio, 1, 10) <> ?",
                 (_iso(ahora), ahora.date().isoformat()),
             )
         return cur.rowcount
@@ -124,7 +125,8 @@ class Store:
         return total - n
 
     def ultimo_cierre(self) -> datetime | None:
-        f = self.con.execute("SELECT MAX(fin) AS fin FROM ciclo WHERE fin IS NOT NULL AND parcial = 0").fetchone()
+        f = self.con.execute("SELECT MAX(fin) AS fin FROM ciclo WHERE fin IS NOT NULL AND parcial = 0 "
+            "AND estado NOT LIKE 'Cancelado%'").fetchone()
         return datetime.fromisoformat(f["fin"]) if f["fin"] else None
 
     def ultimo_ciclo(self) -> dict | None:

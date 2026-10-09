@@ -291,3 +291,23 @@ def test_contar_pendientes_cuenta_solo_las_pendientes(store):
     alerta_id = store.filas_reporte(c2)[0]["alerta_id"]
     store.registrar_decision(alerta_id, DESCARTADA, "Alisson", AHORA)
     assert store.contar_pendientes() == 0
+
+
+def test_un_ciclo_cancelado_del_mismo_dia_se_reanuda(store):
+    a = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(a, "Cancelado por el usuario", AHORA)
+    assert store.iniciar_ciclo(AHORA) == a
+    assert store.con.execute("SELECT estado FROM ciclo WHERE id = ?", (a,)).fetchone()[0] == "En curso"
+
+
+def test_un_ciclo_cancelado_de_ayer_pasa_a_interrumpido(store):
+    a = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(a, "Cancelado por el usuario", AHORA)
+    assert store.cerrar_interrumpidos(AHORA + timedelta(days=1)) == 1
+    assert store.con.execute("SELECT estado FROM ciclo WHERE id = ?", (a,)).fetchone()[0] == "Interrumpido"
+
+
+def test_ultimo_cierre_ignora_los_ciclos_cancelados(store):
+    a = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(a, "Cancelado por el usuario", AHORA + timedelta(minutes=2))
+    assert store.ultimo_cierre() is None

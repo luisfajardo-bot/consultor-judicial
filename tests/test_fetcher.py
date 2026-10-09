@@ -1,6 +1,8 @@
 import requests
 
-from consultor.fetcher import USER_AGENT, Fetcher
+import pytest
+
+from consultor.fetcher import USER_AGENT, CicloCancelado, Fetcher
 from consultor.models import ERROR, EXITOSA, FALLIDA, Radicado
 
 RAD = Radicado("11001400307720210114700")
@@ -331,3 +333,44 @@ def test_403_solo_en_el_detalle_tambien_es_bloqueo():
     f, _, _ = crear_con(rutas, consultar_detalle=True)
     c = f.consultar(RAD)
     assert c.bloqueo is True and c.estado == FALLIDA
+
+
+def test_pausar_con_cancelado_verdadero_lanza_sin_dormir():
+    dormidos = []
+    f = Fetcher(sesion=SesionFalsa({}), pausa=60.0, dormir=dormidos.append, cancelado=lambda: True)
+    with pytest.raises(CicloCancelado):
+        f.pausar()
+    assert dormidos == []
+
+
+def test_una_espera_larga_se_corta_en_tramos_de_un_segundo_al_cancelar():
+    dormidos, llamadas = [], []
+
+    def cancelado():
+        llamadas.append(1)
+        return len(llamadas) > 2
+
+    f = Fetcher(sesion=SesionFalsa({}), pausa=60.0, dormir=dormidos.append, cancelado=cancelado)
+    with pytest.raises(CicloCancelado):
+        f.pausar()
+    assert dormidos == [1.0, 1.0]
+
+
+def test_sin_cancelado_la_espera_es_un_solo_dormir():
+    f, _, dormidos = crear(rutas_ok())
+    f.pausar()
+    assert dormidos == [1.0]
+
+
+def test_cancelar_durante_la_espera_de_un_bloqueo_interrumpe_la_consulta():
+    rutas = {"NumeroRadicacion": [RespuestaFalsa(403, {})] * 5}
+    dormidos, llamadas = [], []
+
+    def cancelado():
+        llamadas.append(1)
+        return len(llamadas) > 3
+
+    f = Fetcher(sesion=SesionFalsa(rutas), dormir=dormidos.append, cancelado=cancelado, espera_bloqueo=30.0)
+    with pytest.raises(CicloCancelado):
+        f.consultar(Radicado("11001400307720210114700"))
+    assert dormidos and all(d <= 1.0 for d in dormidos)

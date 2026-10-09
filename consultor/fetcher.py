@@ -15,6 +15,10 @@ class ErrorPortal(Exception):
     """El portal no respondió bien tras agotar los reintentos."""
 
 
+class CicloCancelado(Exception):
+    """El usuario pidió cancelar el ciclo en curso."""
+
+
 class BloqueoPortal(ErrorPortal):
     """El portal respondió 403 o 429 de forma persistente: bloqueo temporal por ritmo."""
 
@@ -59,6 +63,7 @@ class Fetcher:
         consultar_detalle=True,
         reintentos_bloqueo=2,
         espera_bloqueo=30.0,
+        cancelado=None,
     ):
         if sesion is None:
             sesion = requests.Session()
@@ -73,15 +78,29 @@ class Fetcher:
         self.consultar_detalle = consultar_detalle
         self.reintentos_bloqueo = reintentos_bloqueo
         self.espera_bloqueo = espera_bloqueo
+        self.cancelado = cancelado
         self._hubo_peticion = False
 
+    def _dormir(self, segundos) -> None:
+        """Duerme; con cancelado, en tramos de 1 s y lanza CicloCancelado en cuanto se pida."""
+        if self.cancelado is None:
+            self.dormir(segundos)
+            return
+        restante = segundos
+        while restante > 0:
+            if self.cancelado():
+                raise CicloCancelado()
+            tramo = min(1.0, restante)
+            self.dormir(tramo)
+            restante -= tramo
+
     def pausar(self) -> None:
-        self.dormir(self.pausa)
+        self._dormir(self.pausa)
 
     def _pedir(self, url, params):
         """Un GET; espera pausa_peticiones antes de todos salvo el primero."""
         if self._hubo_peticion and self.pausa_peticiones > 0:
-            self.dormir(self.pausa_peticiones)
+            self._dormir(self.pausa_peticiones)
         self._hubo_peticion = True
         return self.sesion.get(url, params=params, timeout=self.timeout)
 
@@ -99,7 +118,7 @@ class Fetcher:
                 if resp.status_code in (403, 429):
                     if bloqueos >= self.reintentos_bloqueo:
                         raise BloqueoPortal(resp.status_code)
-                    self.dormir(self.espera_bloqueo * (2**bloqueos))
+                    self._dormir(self.espera_bloqueo * (2**bloqueos))
                     bloqueos += 1
                     continue
                 if resp.status_code == 404:
@@ -115,7 +134,7 @@ class Fetcher:
                 else:
                     motivo = f"HTTP {resp.status_code}"
             if intento < self.reintentos - 1:
-                self.dormir(self.espera * (2**intento))
+                self._dormir(self.espera * (2**intento))
             intento += 1
         raise ErrorPortal(motivo)
 
