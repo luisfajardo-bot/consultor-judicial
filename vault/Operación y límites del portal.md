@@ -27,6 +27,17 @@ Resultado real: ciclo de 41 radicados en 1 a 8 minutos según cuánto frene el p
 - Con consola, se ve una barra de avance. El avance también se publica en `estado.txt` para quien intente lanzar un segundo ciclo.
 - `scripts\ejecutar_ahora.bat` es el doble clic para personas no técnicas.
 
+## Cancelar un ciclo
+
+- El botón **Cancelar** de la [[panel y ventana]] pide la cancelación creando `cancelar.txt` en la carpeta de datos. El ciclo lo detecta entre radicados y durante las esperas largas, termina el radicado en vuelo sin registrarlo y queda **"Cancelado por el usuario"**.
+- Lo ya consultado se conserva. El ciclo se reanuda el mismo día, sin esperar el límite de 30 minutos entre ejecuciones.
+- Sirve también para el ciclo programado, aunque corra oculto.
+- Ctrl+C en una consola también cancela de forma segura. **Cerrar la ventana negra corta el programa a la fuerza** (código `0xC000013A`): no se pierde nada ya guardado, pero queda un `estado.txt` viejo. La ventana ya lo ignora.
+
+## Ejecución oculta
+
+La tarea programada lanza `pythonw.exe` (sin ventana de consola), así nadie puede cortarla cerrando una ventana. Sin consola, la salida y los errores van a `reportes\consola.log` y los avisos a `reportes\avisos.log`. Para ver el avance se abre la ventana.
+
 ## Mantenimiento al final de cada ciclo
 
 - **Archivado:** los reportes con más de 14 días pasan a `reportes\archivo\AAAA-MM\`. No se borran. Nunca se archiva el reporte más reciente. Un archivo abierto en Excel se salta y se reintenta en el siguiente ciclo.

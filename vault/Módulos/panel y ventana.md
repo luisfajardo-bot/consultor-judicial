@@ -15,6 +15,10 @@ Esa separación es la **arquitectura para escalar**: otra vista (por ejemplo una
 - Botón **Consultar ahora**: corre `ejecutar_ciclo` en un hilo aparte. Se desactiva mientras corre otro ciclo, sea de la ventana o de la tarea programada.
 - Botón **Abrir último reporte**.
 
+## Estado confiable y cancelación
+- El avance solo se muestra si el candado está realmente tomado ([[bloqueo]]). Un archivo viejo no hace creer que hay una consulta corriendo ni desactiva **Consultar ahora**.
+- **Cancelar consulta** se habilita solo mientras corre un ciclo, pide confirmación y crea `cancelar.txt`. Funciona con cualquier ciclo, también el programado. Lo ya consultado se conserva.
+
 ## Cuidados
 - No envía datos a ningún servicio externo.
 - No abre la base mientras hay un ciclo en curso, para no esperar un bloqueo de SQLite.

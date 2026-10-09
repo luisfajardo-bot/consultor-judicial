@@ -1,6 +1,6 @@
 # Riesgos y pendientes
 
-Actualizado el 2026-10-08, antes del primer ciclo oficial (viernes 9-oct, 9:00).
+Actualizado el 2026-10-09. El ciclo de referencia terminó a las 9:27: 34 radicados con referencia, 7 con radicado inválido, 0 alertas.
 
 ## Pendientes
 
@@ -25,7 +25,8 @@ Actualizado el 2026-10-08, antes del primer ciclo oficial (viernes 9-oct, 9:00).
 5. **Contencioso-administrativo con publicación parcial.** Solo entran los validados.
 6. **Una sola persona validadora** y un solo responsable técnico. El seguimiento manual no se suspende.
 7. **La base de datos es el único registro** cuando se archivan los Excel, y está en un solo equipo. Mitigación: respaldo semanal, pero en el mismo equipo hasta que se defina la carpeta de red.
-8. **La tarea programada depende de que la sesión de Windows esté iniciada** y de que el equipo esté encendido.
+8. **La tarea programada depende de que la sesión de Windows esté iniciada** y de que el equipo esté encendido. Corre oculta, así que cerrar una ventana ya no la corta.
+9. **El 9-oct la tarea se cortó a los 20 segundos** porque se cerró su ventana de consola. Se corrigió: ejecución oculta, estado confiable y botón Cancelar.
 
 ## Limitaciones conocidas
 

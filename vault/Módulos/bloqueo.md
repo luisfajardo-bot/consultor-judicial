@@ -7,6 +7,9 @@ Es un candado del sistema operativo sobre `datos\consultor.lock`: `msvcrt` en Wi
 
 Quien intenta un segundo ciclo recibe `CicloEnCurso` con el avance del primero y [[main]] responde con código 3: "Ya hay una consulta en curso (09:00 | 12 de 44). No hace falta lanzarla otra vez".
 
+## Un ciclo está en curso si y solo si alguien tiene el candado
+`ciclo_en_curso(carpeta)` sondea el candado: si está libre, el `estado.txt` que haya es un resto viejo (por ejemplo tras cerrar la ventana de la consola) y se borra. Un ciclo que arranca tolera un choque breve con un sondeo: reintenta unos 0,3 s antes de rendirse.
+
 ## El avance
 `estado.txt`, con el formato `HH:MM | N de M`, se reescribe de forma atómica en cada radicado y se borra al terminar. Es la **fuente única del avance**: lo leen el segundo intento de ejecución y el [[panel y ventana]], así que la ventana muestra también el avance de la tarea programada.
 
