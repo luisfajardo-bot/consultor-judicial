@@ -82,8 +82,13 @@ Doble clic en `scripts\abrir_panel.bat`. Se abre una ventana que muestra:
 - El resumen de la última consulta: cuántos radicados se consultaron, cuántos posibles novedades hay y cuántas alertas faltan por validar.
 - El botón **Consultar ahora**, que lanza una consulta con las mismas reglas de siempre.
 - El botón **Abrir último reporte**, que abre el Excel más reciente.
+- El botón **Cancelar**, activo solo mientras hay una consulta en curso (también la programada). Pide confirmación y detiene la consulta al terminar el radicado actual. Lo ya consultado se conserva y se puede continuar más tarde: la siguiente consulta del mismo día sigue desde donde quedó, sin esperar el límite entre ejecuciones.
 
 Si ya hay otra consulta corriendo (por ejemplo la programada de las 9:00), el botón **Consultar ahora** queda desactivado y la barra muestra su avance. Cuando aparece "Sin avance hace N min", casi siempre es el portal pidiendo esperar: no hay que hacer nada, la consulta sigue sola. La ventana no envía datos a ningún sitio: solo lee los archivos de esta carpeta.
+
+Si la consulta corre en una consola, Ctrl+C también la cancela de forma segura. Cerrar la ventana negra, en cambio, corta el programa a la fuerza: el ciclo queda interrumpido y se reanuda en la siguiente consulta, pero conviene usar **Cancelar**.
+
+La consulta programada corre oculta, sin ventana de consola. Sus mensajes quedan en `reportes\avisos.log` y, si algo falla antes de que arranque el registro, en `reportes\consola.log`.
 
 ## Reportes antiguos y copias de seguridad
 
