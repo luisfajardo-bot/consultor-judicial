@@ -5,10 +5,10 @@ import queue
 import sqlite3
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from .main import Ejecucion, cargar_config, ejecutar_ciclo
-from .panel import leer_avance, resumen_ultimo_ciclo, texto_avance, texto_resumen, ultimo_reporte
+from .panel import leer_avance, resumen_ultimo_ciclo, solicitar_cancelacion, texto_avance, texto_resumen, ultimo_reporte
 from .store import Store
 
 FUENTE = ("Segoe UI", 11)
@@ -18,12 +18,19 @@ VERDE = "#006400"
 
 
 class Ventana:
-    def __init__(self, raiz, cfg, ejecutar=ejecutar_ciclo):
+    def __init__(self, raiz, cfg, ejecutar=ejecutar_ciclo, confirmar=None):
         self.raiz, self.cfg, self.ejecutar = raiz, cfg, ejecutar
+        self.confirmar = confirmar or (
+            lambda: messagebox.askyesno(
+                "Cancelar consulta",
+                "¿Cancelar la consulta en curso? Lo ya consultado se conserva y podrá continuar después.",
+            )
+        )
         self.carpeta_datos = os.path.dirname(cfg["salida"]["base_datos"])
         self.carpeta_reportes = cfg["salida"]["carpeta_reportes"]
         self.cola = queue.Queue()
         self.hilo = None
+        self.cancelando = False
         self.texto_resumen_actual = texto_resumen(None)
 
         raiz.title("Consultor Judicial")
@@ -50,8 +57,10 @@ class Ventana:
         self.boton_consultar = ttk.Button(botones, text="Consultar ahora", command=self.consultar)
         self.boton_consultar.pack(side="left", padx=(0, 8))
         self.boton_reporte = ttk.Button(botones, text="Abrir último reporte", command=self.abrir_reporte)
-        self.boton_reporte.pack(side="left")
-        for b in (self.boton_consultar, self.boton_reporte):
+        self.boton_reporte.pack(side="left", padx=(0, 8))
+        self.boton_cancelar = ttk.Button(botones, text="Cancelar", command=self.cancelar, state="disabled")
+        self.boton_cancelar.pack(side="left")
+        for b in (self.boton_consultar, self.boton_reporte, self.boton_cancelar):
             b.bind("<Return>", lambda e: e.widget.invoke())
 
     def refrescar(self):
@@ -73,14 +82,27 @@ class Ventana:
                         store.con.close()
                 except sqlite3.OperationalError:
                     pass  # base ocupada: se deja el texto anterior
+        if not avance:
+            self.cancelando = False
         self.etiqueta_resumen.config(text=self.texto_resumen_actual)
         self.boton_consultar.config(state="disabled" if avance or corriendo else "normal")
+        self.boton_cancelar.config(state="normal" if avance and not self.cancelando else "disabled")
 
     def consultar(self):
         self.etiqueta_estado.config(text="")
         self.boton_consultar.config(state="disabled")
         self.hilo = threading.Thread(target=lambda: self.cola.put(self.ejecutar(self.cfg)), daemon=True)
         self.hilo.start()
+
+    def cancelar(self):
+        if not self.confirmar():
+            return
+        if solicitar_cancelacion(self.carpeta_datos):
+            self.cancelando = True
+            self.boton_cancelar.config(state="disabled")
+            self.etiqueta_estado.config(text="Cancelando: termina el radicado actual y se detiene.", fg=ROJO)
+        else:
+            self.etiqueta_estado.config(text="No hay ninguna consulta en curso.", fg=ROJO)
 
     def sondear(self):
         while True:

@@ -71,3 +71,61 @@ def test_si_el_ciclo_es_rechazado_se_muestra_el_mensaje(raiz, tmp_path, monkeypa
     v.hilo.join(timeout=30)
     v.sondear()
     assert "espera hasta las" in v.etiqueta_estado.cget("text")
+
+
+def _estado(w):
+    return str(w.cget("state"))
+
+
+def test_sin_ciclo_el_boton_cancelar_esta_deshabilitado(raiz, tmp_path, monkeypatch):
+    v = Ventana(raiz, _cfg(tmp_path, monkeypatch), confirmar=lambda: True)
+    v.refrescar()
+    assert _estado(v.boton_cancelar) == "disabled"
+
+
+def test_con_ciclo_el_boton_cancelar_esta_habilitado(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    with Bloqueo(tmp_path / "datos") as b:
+        b.publicar("09:00 | 12 de 44")
+        v = Ventana(raiz, cfg, confirmar=lambda: True)
+        v.refrescar()
+        assert _estado(v.boton_cancelar) == "normal"
+
+
+def test_si_no_se_confirma_no_se_pide_cancelar(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    with Bloqueo(tmp_path / "datos") as b:
+        b.publicar("09:00 | 12 de 44")
+        v = Ventana(raiz, cfg, confirmar=lambda: False)
+        v.refrescar()
+        v.boton_cancelar.invoke()
+        assert not (tmp_path / "datos" / "cancelar.txt").exists()
+
+
+def test_al_confirmar_se_crea_cancelar_txt_y_se_avisa(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    with Bloqueo(tmp_path / "datos") as b:
+        b.publicar("09:00 | 12 de 44")
+        v = Ventana(raiz, cfg, confirmar=lambda: True)
+        v.refrescar()
+        v.boton_cancelar.invoke()
+        assert (tmp_path / "datos" / "cancelar.txt").exists()
+        assert "Cancelando" in v.etiqueta_estado.cget("text")
+        assert _estado(v.boton_cancelar) == "disabled"
+
+
+def test_si_el_ciclo_ya_termino_se_dice_que_no_hay_consulta(raiz, tmp_path, monkeypatch):
+    v = Ventana(raiz, _cfg(tmp_path, monkeypatch), confirmar=lambda: True)
+    v.cancelar()
+    assert "No hay ninguna consulta en curso" in v.etiqueta_estado.cget("text")
+    assert not (tmp_path / "datos" / "cancelar.txt").exists()
+
+
+def test_un_estado_viejo_sin_candado_no_habilita_cancelar_ni_bloquea_consultar(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    (tmp_path / "datos").mkdir(exist_ok=True)
+    (tmp_path / "datos" / "estado.txt").write_text("09:00 | 1 de 41", encoding="utf-8")
+    v = Ventana(raiz, cfg, confirmar=lambda: True)
+    v.refrescar()
+    assert _estado(v.boton_cancelar) == "disabled"
+    assert _estado(v.boton_consultar) == "normal"
