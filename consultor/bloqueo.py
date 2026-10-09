@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 
 if sys.platform == "win32":
@@ -31,18 +32,24 @@ class CicloEnCurso(Exception):
 
 
 class Bloqueo:
-    def __init__(self, carpeta):
+    def __init__(self, carpeta, reintentos=4):
         carpeta = Path(carpeta)
         self.ruta = carpeta / "consultor.lock"
         self.ruta_estado = carpeta / "estado.txt"
+        self.reintentos = reintentos
         self.fd = None
 
     def __enter__(self):
         self.ruta.parent.mkdir(parents=True, exist_ok=True)
         self.fd = os.open(self.ruta, os.O_RDWR | os.O_CREAT)
-        try:
-            _bloquear(self.fd)
-        except OSError:
+        for intento in range(self.reintentos):
+            try:
+                _bloquear(self.fd)
+                break
+            except OSError:
+                if intento < self.reintentos - 1:
+                    time.sleep(0.1)
+        else:
             os.close(self.fd)
             self.fd = None
             raise CicloEnCurso(self.leer_estado()) from None
@@ -67,3 +74,12 @@ class Bloqueo:
             return self.ruta_estado.read_text(encoding="utf-8")
         except OSError:
             return ""
+
+
+def ciclo_en_curso(carpeta) -> bool:
+    """Verdadero si otro proceso tiene el candado. Si está libre, borra un estado.txt viejo."""
+    try:
+        with Bloqueo(carpeta, reintentos=1):
+            return False
+    except CicloEnCurso:
+        return True

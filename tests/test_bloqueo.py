@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from consultor.bloqueo import Bloqueo, CicloEnCurso
+from consultor.bloqueo import Bloqueo, CicloEnCurso, ciclo_en_curso
 
 
 def test_el_segundo_bloqueo_falla_y_muestra_el_estado(tmp_path):
@@ -50,3 +50,42 @@ def test_se_libera_si_el_proceso_muere(tmp_path):
             time.sleep(0.1)
     else:
         pytest.fail("el candado no se liberó tras morir el proceso")
+
+
+def test_ciclo_en_curso_es_falso_si_nadie_tiene_el_candado(tmp_path):
+    assert ciclo_en_curso(tmp_path) is False
+
+
+def test_ciclo_en_curso_es_verdadero_mientras_alguien_lo_tiene(tmp_path):
+    with Bloqueo(tmp_path):
+        assert ciclo_en_curso(tmp_path) is True
+    assert ciclo_en_curso(tmp_path) is False
+
+
+def test_sondear_borra_un_estado_viejo_pero_no_toca_uno_vivo(tmp_path):
+    (tmp_path / "estado.txt").write_text("09:00 | 1 de 41", encoding="utf-8")
+    assert ciclo_en_curso(tmp_path) is False
+    assert not (tmp_path / "estado.txt").exists()
+    with Bloqueo(tmp_path) as b:
+        b.publicar("09:00 | 5 de 41")
+        assert ciclo_en_curso(tmp_path) is True
+        assert (tmp_path / "estado.txt").read_text(encoding="utf-8") == "09:00 | 5 de 41"
+
+
+def test_un_choque_breve_con_el_sondeo_no_rechaza_al_ciclo(tmp_path, monkeypatch):
+    # Un sondeo de la ventana puede tener el candado unos milisegundos justo cuando arranca un ciclo.
+    import consultor.bloqueo as m
+
+    intentos = []
+    original = m._bloquear
+
+    def inestable(fd):
+        intentos.append(1)
+        if len(intentos) < 3:
+            raise OSError("ocupado un instante")
+        return original(fd)
+
+    monkeypatch.setattr(m, "_bloquear", inestable)
+    with Bloqueo(tmp_path):
+        pass
+    assert len(intentos) == 3
