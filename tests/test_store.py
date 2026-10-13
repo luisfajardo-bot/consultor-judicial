@@ -175,14 +175,16 @@ def test_tiene_referencia_usa_indice_y_no_recorre_la_tabla(store):
     assert "SCAN" not in p and "ix_consulta_radicado" in p
 
 
-def test_ultima_actuacion_no_necesita_ordenar_aparte(store):
-    p = plan(
-        store,
-        "SELECT fecha_actuacion, actuacion FROM actuacion WHERE radicado = ? "
-        "ORDER BY fecha_actuacion DESC, id_reg_actuacion DESC LIMIT 1",
-        (R.radicado,),
+def test_ultima_actuacion_es_la_mas_reciente_y_desempata_por_id(store):
+    c = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(
+        c, R.radicado, ok(act(1, fecha="2026-06-01"), act(3, fecha="2026-07-01"), act(2, fecha="2026-07-01")),
+        Veredicto(SIN_CAMBIO), "", AHORA,
     )
-    assert "TEMP B-TREE" not in p and "ix_actuacion_radicado_fecha" in p
+    assert store.ultima_actuacion(R.radicado).startswith("2026-07-01")
+    assert store.con.execute(
+        "SELECT id_reg_actuacion FROM actuacion WHERE fecha_actuacion = '2026-07-01' ORDER BY id_reg_actuacion DESC"
+    ).fetchone()[0] == 3
 
 
 def test_consultas_de_alertas_usan_indice(store):
@@ -371,3 +373,37 @@ def test_un_ciclo_interrumpido_no_cuenta_como_ultimo_cierre(store):
     store.iniciar_ciclo(AHORA - timedelta(hours=1))  # un ciclo que quedó abierto
     store.cerrar_interrumpidos(manana)  # al día siguiente se marca Interrumpido con fin = manana
     assert store.ultimo_cierre() == AHORA
+
+
+def _base_con_dos_radicados(tmp_path):
+    ruta = tmp_path / "datos.db"
+    s = Store(ruta)
+    a, b = Radicado("11001400307720210114700"), Radicado("11001400307720210114701")
+    s.registrar_radicados([a, b])
+    c = s.iniciar_ciclo(AHORA)
+    for r in (a, b):
+        s.registrar_resultado(c, r.radicado, ok(act(1), act(2)), Veredicto(SIN_CAMBIO), "", AHORA)
+    return ruta, s, a, b
+
+
+def test_la_migracion_copia_lo_conocido_entre_radicados_del_mismo_proceso(tmp_path):
+    ruta, s, a, b = _base_con_dos_radicados(tmp_path)
+    s.con.execute("DROP TABLE actuacion_radicado")
+    s.con.commit()
+    s.con.close()
+    s2 = Store(ruta)
+    assert s2.ids_conocidos(b.radicado) == {1, 2}
+    assert s2.ids_conocidos(a.radicado) == {1, 2}
+
+
+def test_la_migracion_se_repite_si_la_tabla_quedo_vacia_y_no_duplica(tmp_path):
+    ruta, s, a, b = _base_con_dos_radicados(tmp_path)
+    s.con.execute("DELETE FROM actuacion_radicado")
+    s.con.commit()
+    s.con.close()
+    s2 = Store(ruta)
+    assert s2.ids_conocidos(b.radicado) == {1, 2}
+    n = s2.con.execute("SELECT COUNT(*) FROM actuacion_radicado").fetchone()[0]
+    s2.con.close()
+    s3 = Store(ruta)
+    assert s3.con.execute("SELECT COUNT(*) FROM actuacion_radicado").fetchone()[0] == n

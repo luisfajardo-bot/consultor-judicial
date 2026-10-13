@@ -12,7 +12,7 @@
 Nada se borra (R8).
 
 ## Índices
-Todas las consultas por radicado usan índice (`ix_consulta_radicado`, `ix_actuacion_radicado_fecha`, `ix_alerta_ciclo` y el parcial `ix_alerta_pendiente`). Una base con 500 radicados y 40 ciclos pesa unos 8 MB. Las bases ya creadas se migran al abrirlas.
+Todas las consultas por radicado usan índice (`ix_consulta_radicado`, `ix_alerta_ciclo` y el parcial `ix_alerta_pendiente`; `ix_actuacion_radicado_fecha` se conserva en el esquema pero `ultima_actuacion` ya no lo usa). Una base con 500 radicados y 40 ciclos pesa unos 8 MB. Las bases ya creadas se migran al abrirlas.
 
 No se usa el modo WAL: no es seguro si la carpeta queda en una unidad de red.
 

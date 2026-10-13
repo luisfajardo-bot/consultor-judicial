@@ -39,6 +39,14 @@ class Resumen:
     pendientes: int = 0
 
 
+def _desde(primer_intento, ahora: datetime, dias: int) -> str:
+    """Corte de la primera consulta exitosa, anclado al primer intento del radicado: si estuvo
+    fallando varios días, lo registrado desde que entró a la lista sigue contando."""
+    if dias <= 0:
+        return ""
+    return ((primer_intento or ahora) - timedelta(days=dias)).date().isoformat()
+
+
 def correr_ciclo(
     radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30, cancelado=None, alertar_primera_dias=0
 ) -> Resumen:
@@ -62,9 +70,6 @@ def correr_ciclo(
     detenido = bloqueado = cancelo = False
     ultimo = len(radicados) - 1
     store.registrar_radicados(radicados)
-    desde = (
-        (ahora() - timedelta(days=alertar_primera_dias)).date().isoformat() if alertar_primera_dias > 0 else ""
-    )
 
     def avisar_cancelado():
         pendientes = store.pendientes(ciclo_id, len(radicados))
@@ -106,6 +111,7 @@ def correr_ciclo(
                     f"espere al menos {min_minutos} minutos."
                 )
                 break
+            desde = _desde(store.primer_intento(r.radicado), ahora(), alertar_primera_dias)
             veredicto = comparar(
                 consulta,
                 store.ids_vistos(r.radicado, (a.id_reg_actuacion for a in consulta.actuaciones)),

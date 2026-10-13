@@ -84,12 +84,22 @@ class Store:
             Path(ruta).parent.mkdir(parents=True, exist_ok=True)
         self.con = sqlite3.connect(str(ruta))
         self.con.row_factory = sqlite3.Row
-        tablas = {f["name"] for f in self.con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         self.con.executescript(ESQUEMA)
-        if "actuacion_radicado" not in tablas:  # migración única: lo guardado hasta hoy
+        sin_vinculos = self.con.execute("SELECT NOT EXISTS (SELECT 1 FROM actuacion_radicado)").fetchone()[0]
+        con_actuaciones = self.con.execute("SELECT EXISTS (SELECT 1 FROM actuacion)").fetchone()[0]
+        if sin_vinculos and con_actuaciones:  # base creada antes de la tabla (o migración interrumpida)
             with self.con:
                 self.con.execute(
-                    "INSERT OR IGNORE INTO actuacion_radicado SELECT radicado, id_reg_actuacion FROM actuacion"
+                    "INSERT OR IGNORE INTO actuacion_radicado "
+                    "SELECT radicado, id_reg_actuacion FROM actuacion"
+                )
+                # un radicado hereda lo del otro radicado que devuelve el mismo proceso
+                self.con.execute(
+                    "INSERT OR IGNORE INTO actuacion_radicado "
+                    "SELECT r2.radicado, t.id_reg_actuacion FROM actuacion t "
+                    "JOIN radicado r1 ON r1.radicado = t.radicado "
+                    "JOIN radicado r2 ON r2.id_proceso = r1.id_proceso "
+                    "WHERE r1.id_proceso IS NOT NULL"
                 )
         if "parcial" not in {f["name"] for f in self.con.execute("PRAGMA table_info(ciclo)")}:
             with self.con:
@@ -219,6 +229,13 @@ class Store:
             ).fetchone()
             is not None
         )
+
+    def primer_intento(self, radicado: str) -> datetime | None:
+        """Hora de la primera consulta del radicado, exitosa o no."""
+        f = self.con.execute(
+            "SELECT MIN(hora) AS hora FROM consulta WHERE radicado = ?", (radicado,)
+        ).fetchone()
+        return datetime.fromisoformat(f["hora"]) if f["hora"] else None
 
     def ultima_actuacion(self, radicado: str) -> str:
         f = self.con.execute(

@@ -651,6 +651,23 @@ def test_primera_vez_alerta_lo_registrado_en_los_ultimos_dias_configurados(tmp_p
     assert filas[0][enc.index("Fecha actuación detectada")] == "2026-10-08"
 
 
+def test_la_ventana_de_la_primera_consulta_cuenta_desde_el_primer_intento(tmp_path):
+    store, reloj = Store(":memory:"), Reloj()  # 2026-10-12
+    f = FetcherFalso({R1.radicado: Consulta(FALLIDA, motivo="sin resultados", falla_portal=True)})
+    correr_ciclo([R1], f, store, tmp_path, "Alisson Rengifo", 1.0, [].append, reloj, alertar_primera_dias=7)
+    reloj.avanzar(10)  # 2026-10-22: lo del 13-oct ya es más viejo que 7 días desde hoy
+    f = FetcherFalso({R1.radicado: ok(act(1, fecha="2026-10-13", registro="2026-10-13"))})
+    r = correr_ciclo([R1], f, store, tmp_path, "Alisson Rengifo", 1.0, [].append, reloj, alertar_primera_dias=7)
+    assert r.novedades == 1
+
+
+def test_el_primer_intento_del_mismo_dia_no_cambia_la_ventana(tmp_path):
+    store, reloj = Store(":memory:"), Reloj()
+    f = FetcherFalso({R1.radicado: ok(act(2, fecha="2026-10-01", registro="2026-10-01"), act(1, registro="2026-05-15"))})
+    r = correr_ciclo([R1], f, store, tmp_path, "Alisson Rengifo", 0.5, [].append, reloj, alertar_primera_dias=7)
+    assert r.novedades == 0
+
+
 def _con_actuacion_de_hoy(monkeypatch):
     from datetime import date
 
