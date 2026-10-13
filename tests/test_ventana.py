@@ -175,3 +175,18 @@ def test_si_refrescar_falla_la_ventana_lo_dice_y_sigue_sondeando(raiz, tmp_path,
     v.sondear()
     assert "No se pudo actualizar" in v.etiqueta_estado.cget("text")
     assert programados == [1000]  # sigue sondeando
+
+
+def test_si_el_refresco_se_recupera_la_ventana_limpia_el_aviso(raiz, tmp_path, monkeypatch):
+    v = Ventana(raiz, _cfg(tmp_path, monkeypatch))
+    monkeypatch.setattr(v.raiz, "after", lambda ms, fn: None)
+
+    def falla():
+        raise RuntimeError("base dañada")
+
+    monkeypatch.setattr(v, "refrescar", falla)
+    v.sondear()
+    assert "No se pudo actualizar" in v.etiqueta_estado.cget("text")
+    monkeypatch.setattr(v, "refrescar", lambda: None)
+    v.sondear()
+    assert v.etiqueta_estado.cget("text") == ""

@@ -21,6 +21,7 @@ VERDE = "#006400"
 class Ventana:
     def __init__(self, raiz, cfg, ejecutar=ejecutar_ciclo, confirmar=None):
         self.raiz, self.cfg, self.ejecutar = raiz, cfg, ejecutar
+        self._error_pantalla = False
         self.confirmar = confirmar or (
             lambda: messagebox.askyesno(
                 "Cancelar consulta",
@@ -146,7 +147,11 @@ class Ventana:
             self._mostrar(e)
         try:
             self.refrescar()
+            if self._error_pantalla:  # el refresco se recuperó: quitar el aviso
+                self._error_pantalla = False
+                self.etiqueta_estado.config(text="")
         except Exception as e:  # la pantalla debe seguir viva aunque la base o la carpeta fallen
+            self._error_pantalla = True
             self.etiqueta_estado.config(
                 text=f"No se pudo actualizar la pantalla ({type(e).__name__}). Avise a Sistemas.", fg=ROJO
             )
