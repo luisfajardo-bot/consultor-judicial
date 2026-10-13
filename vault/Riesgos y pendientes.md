@@ -1,6 +1,6 @@
 # Riesgos y pendientes
 
-Actualizado el 2026-10-09. El ciclo de referencia terminó a las 9:27: 34 radicados con referencia, 7 con radicado inválido, 0 alertas.
+Actualizado el 2026-10-13. El ciclo de referencia terminó a las 9:27: 34 radicados con referencia, 7 con radicado inválido, 0 alertas.
 
 ## Pendientes
 
@@ -15,6 +15,11 @@ Actualizado el 2026-10-09. El ciclo de referencia terminó a las 9:27: 34 radica
 | Línea base de tiempos manuales de Alisson | Alisson | Pendiente |
 | Responsable técnico que mantiene el código | Núcleo Técnico | Por confirmar |
 | Canal de alertas (correo o Teams) | Sistemas | Aplazado, ver [[Fase de escalamiento]] |
+| Verificar `scripts\ejecutar_ciclo.bat` en el equipo de producción: ahora usa `.venv\Scripts\pythonw.exe` con `start /wait`; probar que corre oculto, que el código de salida llega bien (0 completo, 3 límite) y que sin `.venv` deja el aviso en `reportes\consola.log` y sale con 2 | Luis y Sistemas | Pendiente |
+| Mover `reporte_ciclo_0001_2026-10-09.xlsx` de la raíz del repositorio a `reportes\archivo\` (git lo ignora pero es información confidencial) | Luis | Pendiente |
+| Hora de la tarea programada: el README dice 06:30 y la bóveda 9:00 | Luis | Sin decidir |
+| Aviso activo (correo, Teams o archivo ALERTA) y reintento automático tras un bloqueo del portal: hoy un bloqueo un viernes deja los pendientes hasta el lunes | Sistemas | Aplazado |
+| Fijar dependencias transitivas con hashes y `pip-audit` periódico | Núcleo Técnico | Pendiente |
 
 ## Riesgos de la solución
 
@@ -27,6 +32,13 @@ Actualizado el 2026-10-09. El ciclo de referencia terminó a las 9:27: 34 radica
 7. **La base de datos es el único registro** cuando se archivan los Excel, y está en un solo equipo. Mitigación: respaldo semanal, pero en el mismo equipo hasta que se defina la carpeta de red.
 8. **La tarea programada depende de que la sesión de Windows esté iniciada** y de que el equipo esté encendido. Corre oculta, así que cerrar una ventana ya no la corta.
 9. **El 9-oct la tarea se cortó a los 20 segundos** porque se cerró su ventana de consola. Se corrigió: ejecución oculta, estado confiable y botón Cancelar.
+10. **Decisiones falsificables.** Cualquier archivo `reporte_*.xlsx` en `reportes\` puede descartar alertas ajenas firmando como el validador, y arrastrar para rellenar la columna Decisión descarta alertas de forma irreversible (la primera decisión cuenta). Aceptado el 2026-10-13: la única usuaria de la herramienta es Alisson y nadie más tiene acceso a la carpeta. Se reabre si alguien más obtiene acceso.
+11. **Respaldo de `actuacion_radicado`.** Al actualizar una base existente, la migración copia lo conocido entre radicados que comparten proceso (vía `radicado.id_proceso`) y es a prueba de cortes: se ejecuta siempre que la tabla de enlace esté vacía y `actuacion` no. La exposición que queda son solo los radicados cuyo `id_proceso` nunca se registró (el error va hacia avisar de más, nunca de menos).
+12. **Aviso de filas sin radicado.** Si la fuente no tiene filtro de estado configurado, una fila con solo el estado cuenta como "con datos". El aviso también sale en el modo `--solo-radicado`.
+13. **Radicados pegados.** Dos radicados distintos con un dígito de más y uno de menos pegados (24+22 dígitos) se cortan en dos números de 23 que parecen válidos; el portal casi seguro no los encuentra (queda NO VERIFICADO). Raro: requiere dos errores de digitación.
+14. **Panel y rutas relativas.** El panel abre y recrea el esquema de la base cada segundo, y las rutas son relativas al directorio de trabajo (`datos\`, `reportes\`): lanzar desde otra carpeta crea otra base. Bajo, sin arreglar.
+
+Nota: la ventana de la primera consulta se ancla al primer intento del radicado, no a hoy: un radicado que falló varios días sigue contando lo registrado desde que entró a la lista.
 
 ## Limitaciones conocidas
 

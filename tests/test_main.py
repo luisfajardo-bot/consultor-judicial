@@ -635,3 +635,162 @@ def test_un_ciclo_rechazado_no_ejecuta_mantenimiento(tmp_path, monkeypatch):
         b.publicar("09:00 | 1 de 2")
         assert main_mod.ejecutar_ciclo(cfg).codigo == 3  # por el candado
     assert llamadas == []
+
+
+def test_primera_vez_alerta_lo_registrado_en_los_ultimos_dias_configurados(tmp_path):
+    store, reloj = Store(":memory:"), Reloj()  # 2026-10-12
+    f = FetcherFalso(
+        {R1.radicado: ok(act(2, fecha="2026-10-08", registro="2026-10-08"), act(1, registro="2026-05-15"))}
+    )
+    r = correr_ciclo(
+        [R1], f, store, tmp_path, "Alisson Rengifo", 0.5, [].append, reloj, alertar_primera_dias=7
+    )
+    assert r.novedades == 1
+    enc, filas = hoja_alertas(r.reporte)
+    assert filas[0][enc.index("Resultado")] == "POSIBLE NOVEDAD"
+    assert filas[0][enc.index("Fecha actuación detectada")] == "2026-10-08"
+
+
+def test_la_ventana_de_la_primera_consulta_cuenta_desde_el_primer_intento(tmp_path):
+    store, reloj = Store(":memory:"), Reloj()  # 2026-10-12
+    f = FetcherFalso({R1.radicado: Consulta(FALLIDA, motivo="sin resultados", falla_portal=True)})
+    correr_ciclo([R1], f, store, tmp_path, "Alisson Rengifo", 1.0, [].append, reloj, alertar_primera_dias=7)
+    reloj.avanzar(10)  # 2026-10-22: lo del 13-oct ya es más viejo que 7 días desde hoy
+    f = FetcherFalso({R1.radicado: ok(act(1, fecha="2026-10-13", registro="2026-10-13"))})
+    r = correr_ciclo([R1], f, store, tmp_path, "Alisson Rengifo", 1.0, [].append, reloj, alertar_primera_dias=7)
+    assert r.novedades == 1
+
+
+def test_el_primer_intento_del_mismo_dia_no_cambia_la_ventana(tmp_path):
+    store, reloj = Store(":memory:"), Reloj()
+    f = FetcherFalso({R1.radicado: ok(act(2, fecha="2026-10-01", registro="2026-10-01"), act(1, registro="2026-05-15"))})
+    r = correr_ciclo([R1], f, store, tmp_path, "Alisson Rengifo", 0.5, [].append, reloj, alertar_primera_dias=7)
+    assert r.novedades == 0
+
+
+def _con_actuacion_de_hoy(monkeypatch):
+    from datetime import date
+
+    class Falso:
+        def __init__(self, **k):
+            pass
+
+        def consultar(self, r):
+            return ok(act(1, fecha=date.today().isoformat()))
+
+        def pausar(self):
+            pass
+
+    monkeypatch.setattr(main_mod, "Fetcher", Falso)
+
+
+def test_los_dias_de_la_pantalla_mandan_sobre_la_configuracion(tmp_path, monkeypatch):
+    from consultor.ajustes import guardar_dias
+
+    args = preparar(tmp_path, monkeypatch)
+    _con_actuacion_de_hoy(monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    guardar_dias(tmp_path / "datos", 0)  # sin ventana: todo es referencia
+    assert main_mod.ejecutar_ciclo(cfg).codigo == 0
+    store = Store(str(tmp_path / "datos" / "c.db"))
+    assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 0
+
+
+def test_sin_ajuste_de_la_pantalla_rige_el_de_la_configuracion_y_luego_el_7(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    _con_actuacion_de_hoy(monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    assert main_mod.ejecutar_ciclo(cfg).codigo == 0  # por defecto 7 días: la de hoy alerta
+    store = Store(str(tmp_path / "datos" / "c.db"))
+    assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1
+
+
+def _radicados_en(reporte):
+    wb = load_workbook(reporte)
+    salida = set()
+    for hoja in ("Alertas", "Sin cambio"):
+        filas = list(wb[hoja].iter_rows(values_only=True))
+        i = filas[0].index("Radicado")
+        salida |= {f[i] for f in filas[1:]}
+    return salida
+
+
+def test_dos_radicados_con_el_mismo_proceso_no_dan_alertas_falsas_ni_desaparecen(tmp_path):
+    r2 = Radicado("11001400307720210114702")
+    store, reloj = Store(":memory:"), Reloj()
+    f = FetcherFalso({R1.radicado: ok(act(1), act(2)), r2.radicado: ok(act(1), act(2))})
+    correr(tmp_path, [R1, r2], f, store, reloj)
+    reloj.avanzar()
+    ciclo2 = correr(tmp_path, [R1, r2], f, store, reloj)
+    assert ciclo2.novedades == 0  # nada nuevo: ninguno de los dos alerta
+
+    reloj.avanzar()
+    nueva = ok(act(3), act(2), act(1))
+    f.respuestas = {R1.radicado: nueva, r2.radicado: nueva}
+    ciclo3 = correr(tmp_path, [R1, r2], f, store, reloj)
+    assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1  # una sola alerta
+    assert _radicados_en(ciclo3.reporte) == {R1.radicado, r2.radicado}  # ninguno desaparece
+
+
+def test_un_radicado_nuevo_antes_en_la_lista_no_se_traga_la_novedad_de_otro(tmp_path):
+    r2 = Radicado("11001400307720210114702")
+    store, reloj = Store(":memory:"), Reloj()
+    f = FetcherFalso({r2.radicado: ok(act(1), act(2))})
+    correr(tmp_path, [r2], f, store, reloj)
+    reloj.avanzar()
+    nueva = ok(act(3), act(2), act(1))
+    f.respuestas = {R1.radicado: nueva, r2.radicado: nueva}
+    correr(tmp_path, [R1, r2], f, store, reloj)
+    filas = store.con.execute("SELECT radicado FROM alerta").fetchall()
+    assert [x["radicado"] for x in filas] == [r2.radicado]
+
+
+def test_radicado_agregado_despues_no_repite_una_alerta_ya_dada(tmp_path):
+    r2 = Radicado("11001400307720210114702")
+    store, reloj = Store(":memory:"), Reloj()  # 2026-10-12
+    f = FetcherFalso({R1.radicado: ok(act(1, registro="2026-05-15"))})
+
+    def ciclo(radicados):
+        return correr_ciclo(
+            radicados, f, store, tmp_path, "Alisson Rengifo", 0.5, [].append, reloj, alertar_primera_dias=7
+        )
+
+    ciclo([R1])
+    reloj.avanzar()
+    todas = ok(act(3, registro="2026-10-11"), act(1, registro="2026-05-15"))
+    f.respuestas = {R1.radicado: todas}
+    assert ciclo([R1]).novedades == 1
+    reloj.avanzar()
+    f.respuestas = {R1.radicado: todas, r2.radicado: todas}
+    ciclo3 = ciclo([R1, r2])
+    assert ciclo3.novedades == 0
+    assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1
+
+
+def test_las_decisiones_importadas_quedan_en_el_aviso(tmp_path):
+    avisos = []
+    store, reloj, f, r1, r2 = dos_ciclos(tmp_path)
+    wb = load_workbook(r2.reporte)
+    hoja = wb["Alertas"]
+    enc = [c.value for c in hoja[1]]
+    hoja.cell(row=2, column=enc.index("Decisión") + 1, value="Confirmada")
+    wb.save(r2.reporte)
+    reloj.avanzar()
+    correr(tmp_path, [R1], f, store, reloj, avisos)
+    assert any("1 decisión" in a and "reporte" in a.lower() for a in avisos)
+    reloj.avanzar()
+    avisos2 = []
+    correr(tmp_path, [R1], f, store, reloj, avisos2)
+    assert not any("decisión(es)" in a for a in avisos2)
+
+
+def test_las_filas_sin_radicado_se_avisan(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    wb = load_workbook(tmp_path / "x.xlsx")
+    wb["GENERAL"].append([None])  # fila sin radicado pero ...
+    wb["GENERAL"].cell(row=3, column=2, value="dato suelto")  # ... con datos en otra columna
+    wb.save(tmp_path / "x.xlsx")
+    avisos = []
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    assert main_mod.ejecutar_ciclo(cfg, avisar_fn=avisos.append).codigo == 0
+    assert any("sin radicado" in a for a in avisos)

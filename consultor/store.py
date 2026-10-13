@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -23,6 +24,9 @@ CREATE TABLE IF NOT EXISTS actuacion (
 DROP INDEX IF EXISTS ix_actuacion_radicado;
 CREATE INDEX IF NOT EXISTS ix_actuacion_radicado_fecha
     ON actuacion(radicado, fecha_actuacion DESC, id_reg_actuacion DESC);
+CREATE TABLE IF NOT EXISTS actuacion_radicado (
+    radicado TEXT NOT NULL, id_reg_actuacion INTEGER NOT NULL,
+    PRIMARY KEY (radicado, id_reg_actuacion)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS ciclo (
     id INTEGER PRIMARY KEY AUTOINCREMENT, inicio TEXT NOT NULL, fin TEXT,
     estado TEXT NOT NULL, parcial INTEGER NOT NULL DEFAULT 0);
@@ -81,6 +85,22 @@ class Store:
         self.con = sqlite3.connect(str(ruta))
         self.con.row_factory = sqlite3.Row
         self.con.executescript(ESQUEMA)
+        sin_vinculos = self.con.execute("SELECT NOT EXISTS (SELECT 1 FROM actuacion_radicado)").fetchone()[0]
+        con_actuaciones = self.con.execute("SELECT EXISTS (SELECT 1 FROM actuacion)").fetchone()[0]
+        if sin_vinculos and con_actuaciones:  # base creada antes de la tabla (o migración interrumpida)
+            with self.con:
+                self.con.execute(
+                    "INSERT OR IGNORE INTO actuacion_radicado "
+                    "SELECT radicado, id_reg_actuacion FROM actuacion"
+                )
+                # un radicado hereda lo del otro radicado que devuelve el mismo proceso
+                self.con.execute(
+                    "INSERT OR IGNORE INTO actuacion_radicado "
+                    "SELECT r2.radicado, t.id_reg_actuacion FROM actuacion t "
+                    "JOIN radicado r1 ON r1.radicado = t.radicado "
+                    "JOIN radicado r2 ON r2.id_proceso = r1.id_proceso "
+                    "WHERE r1.id_proceso IS NOT NULL"
+                )
         if "parcial" not in {f["name"] for f in self.con.execute("PRAGMA table_info(ciclo)")}:
             with self.con:
                 self.con.execute("ALTER TABLE ciclo ADD COLUMN parcial INTEGER NOT NULL DEFAULT 0")
@@ -126,7 +146,7 @@ class Store:
 
     def ultimo_cierre(self) -> datetime | None:
         f = self.con.execute("SELECT MAX(fin) AS fin FROM ciclo WHERE fin IS NOT NULL AND parcial = 0 "
-            "AND estado NOT LIKE 'Cancelado%'").fetchone()
+            "AND estado NOT LIKE 'Cancelado%' AND estado NOT LIKE 'Interrumpido%'").fetchone()
         return datetime.fromisoformat(f["fin"]) if f["fin"] else None
 
     def ultimo_ciclo(self) -> dict | None:
@@ -178,9 +198,28 @@ class Store:
 
     def ids_conocidos(self, radicado: str) -> set[int]:
         filas = self.con.execute(
-            "SELECT id_reg_actuacion FROM actuacion WHERE radicado = ?", (radicado,)
+            "SELECT id_reg_actuacion FROM actuacion_radicado WHERE radicado = ?", (radicado,)
         )
         return {f["id_reg_actuacion"] for f in filas}
+
+    def ids_vistos(self, radicado: str, ids: Iterable[int]) -> set[int]:
+        """Cuáles de estos ids son conocidos para este radicado.
+
+        Dos fuentes: lo que este radicado ya recibió en una consulta exitosa, y lo que ya tiene
+        alerta (se alerta una sola vez en todo el sistema, aunque otro radicado comparta el proceso).
+        Lo guardado en silencio por otro radicado NO cuenta: nadie lo ha alertado. Las marcas "?"
+        son lo único que se arma con texto; los valores van como parámetros.
+        """
+        ids = list(ids)
+        vistos = self.ids_conocidos(radicado)
+        for i in range(0, len(ids), 500):  # SQLite limita las variables por consulta
+            tramo = ids[i : i + 500]
+            marcas = ",".join("?" * len(tramo))
+            filas = self.con.execute(
+                f"SELECT id_reg_actuacion FROM alerta WHERE id_reg_actuacion IN ({marcas})", tramo
+            )
+            vistos.update(f["id_reg_actuacion"] for f in filas)
+        return vistos
 
     def tiene_referencia(self, radicado: str) -> bool:
         return (
@@ -191,10 +230,19 @@ class Store:
             is not None
         )
 
+    def primer_intento(self, radicado: str) -> datetime | None:
+        """Hora de la primera consulta del radicado, exitosa o no."""
+        f = self.con.execute(
+            "SELECT MIN(hora) AS hora FROM consulta WHERE radicado = ?", (radicado,)
+        ).fetchone()
+        return datetime.fromisoformat(f["hora"]) if f["hora"] else None
+
     def ultima_actuacion(self, radicado: str) -> str:
         f = self.con.execute(
-            "SELECT fecha_actuacion, actuacion FROM actuacion WHERE radicado = ? "
-            "ORDER BY fecha_actuacion DESC, id_reg_actuacion DESC LIMIT 1",
+            "SELECT t.fecha_actuacion, t.actuacion FROM actuacion t "
+            "JOIN actuacion_radicado l ON l.id_reg_actuacion = t.id_reg_actuacion "
+            "WHERE l.radicado = ? "
+            "ORDER BY t.fecha_actuacion DESC, t.id_reg_actuacion DESC LIMIT 1",
             (radicado,),
         ).fetchone()
         return f"{f['fecha_actuacion']}: {f['actuacion']}" if f else ""
@@ -235,6 +283,10 @@ class Store:
                         )
                         for a in consulta.actuaciones
                     ],
+                )
+                self.con.executemany(
+                    "INSERT OR IGNORE INTO actuacion_radicado (radicado, id_reg_actuacion) VALUES (?, ?)",
+                    [(radicado, a.id_reg_actuacion) for a in consulta.actuaciones],
                 )
                 if consulta.id_proceso:
                     self.con.execute(
@@ -317,8 +369,8 @@ class Store:
                 "validada_por": "",
                 "validada_en": "",
             }
-            if c["resultado"] == POSIBLE_NOVEDAD:
-                for a in alertas.get(c["radicado"], []):
+            if c["resultado"] == POSIBLE_NOVEDAD and alertas.get(c["radicado"]):
+                for a in alertas[c["radicado"]]:
                     filas.append(
                         {
                             **base,
@@ -332,6 +384,10 @@ class Store:
                             "validada_en": a["validada_en"] or "",
                         }
                     )
+            elif c["resultado"] == POSIBLE_NOVEDAD:
+                # red de seguridad: un radicado consultado nunca puede faltar en el reporte
+                motivo = "novedad sin alerta registrada: verificar en el portal"
+                filas.append({**base, "motivo": "; ".join(p for p in (base["motivo"], motivo) if p)})
             else:
                 filas.append(base)
         for a in self.con.execute(PENDIENTES_SQL, (ciclo_id,)):

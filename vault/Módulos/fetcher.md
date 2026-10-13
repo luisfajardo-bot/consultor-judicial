@@ -27,4 +27,12 @@
 
 **Es el único módulo que conoce la Rama Judicial.** Si el portal cambia, solo se toca este archivo.
 
+## Cambios tras la auditoría (2026-10-13)
+- Una respuesta es ERROR visible ("posible cambio de la API"), nunca "Exitosa con datos de menos", cuando:
+  - `cant` falta, no es entero o es menor que lo recibido;
+  - la paginación termina con menos actuaciones que `cant`;
+  - `idRegActuacion` no es entero;
+  - `fechaActuacion` o `fechaRegistro` no son estrictamente AAAA-MM-DD (nulo o vacío se acepta).
+- El radicado se valida con `[0-9]{23}` y `fullmatch`.
+
 **Depende de:** requests. Usado por [[main]].

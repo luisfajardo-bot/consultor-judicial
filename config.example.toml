@@ -25,6 +25,11 @@ consultar_detalle = false
 reintentos_bloqueo = 3
 espera_bloqueo_segundos = 60
 
+[primera_consulta]
+# En la primera consulta de un radicado, lo registrado en los últimos N días sale como
+# POSIBLE NOVEDAD; lo anterior queda como referencia. 0 = todo es referencia, sin alertas.
+alertar_ultimos_dias = 7
+
 [ejecucion]
 min_minutos_entre_ciclos = 30
 

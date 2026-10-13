@@ -27,6 +27,7 @@ ACTUACIONES = {
             "fechaInicial": None,
             "fechaFinal": None,
             "fechaRegistro": "2026-05-15T00:00:00",
+            "cant": 2,
         },
         {
             "idRegActuacion": 2702295560,
@@ -36,6 +37,7 @@ ACTUACIONES = {
             "fechaInicial": None,
             "fechaFinal": None,
             "fechaRegistro": "2026-04-29T00:00:00",
+            "cant": 2,
         },
     ]
 }
@@ -374,3 +376,88 @@ def test_cancelar_durante_la_espera_de_un_bloqueo_interrumpe_la_consulta():
     with pytest.raises(CicloCancelado):
         f.consultar(Radicado("11001400307720210114700"))
     assert dormidos and all(d <= 1.0 for d in dormidos)
+
+
+def _con_actuaciones(lista):
+    rutas = rutas_ok()
+    rutas["Actuaciones"] = RespuestaFalsa(200, {"actuaciones": lista})
+    return rutas
+
+
+def _a(**kw):
+    base = {
+        "idRegActuacion": 1,
+        "fechaActuacion": "2026-10-08T00:00:00",
+        "actuacion": "X",
+        "anotacion": None,
+        "fechaRegistro": "2026-10-08T00:00:00",
+        "cant": 1,
+    }
+    base.update(kw)
+    return base
+
+
+@pytest.mark.parametrize("malo", [None, "17", True, 1.5])
+def test_un_id_de_actuacion_que_no_es_entero_es_error_visible(malo):
+    f, _, _ = crear(_con_actuaciones([_a(idRegActuacion=malo)]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+@pytest.mark.parametrize("cant", [None, "1", 0])
+def test_cant_inconsistente_es_error_visible(cant):
+    f, _, _ = crear(_con_actuaciones([_a(cant=cant)]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+def test_cant_ausente_es_error_visible():
+    actuacion = _a()
+    del actuacion["cant"]
+    f, _, _ = crear(_con_actuaciones([actuacion]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+@pytest.mark.parametrize("campo", ["fechaActuacion", "fechaRegistro"])
+def test_una_fecha_con_otro_formato_es_error_visible(campo):
+    f, _, _ = crear(_con_actuaciones([_a(**{campo: "08/10/2026"})]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+def test_una_fecha_de_registro_vacia_sigue_siendo_exitosa():
+    f, _, _ = crear(_con_actuaciones([_a(fechaRegistro=None)]))
+    c = f.consultar(RAD)
+    assert c.estado == EXITOSA
+    assert c.actuaciones[0].fecha_registro == ""
+
+
+def test_digitos_unicode_no_son_un_radicado_valido():
+    f, _, _ = crear(rutas_ok())
+    c = f.consultar(Radicado("١" * 23))  # dígitos arábigos
+    assert c.estado == FALLIDA
+
+
+def test_pagina_siguiente_404_con_faltantes_es_error_visible():
+    rutas = rutas_ok()
+    sin = RespuestaFalsa(
+        404, {"StatusCode": 404, "Message": "No se encontraron Actuaciones para el Proceso: 1"}
+    )
+    rutas["Actuaciones"] = [_pagina([3, 2], cant=3), sin]
+    f, _, _ = crear(rutas)
+    assert f.consultar(RAD).estado == ERROR
+
+
+def test_pagina_siguiente_vacia_con_faltantes_es_error_visible():
+    rutas = rutas_ok()
+    rutas["Actuaciones"] = [_pagina([3, 2], cant=3), RespuestaFalsa(200, {"actuaciones": []})]
+    f, _, _ = crear(rutas)
+    assert f.consultar(RAD).estado == ERROR
+
+
+@pytest.mark.parametrize("texto", ["20261008", "2026-W41-4"])
+def test_una_fecha_iso_laxa_es_error_visible(texto):
+    f, _, _ = crear(_con_actuaciones([_a(fechaActuacion=texto)]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+def test_radicado_con_salto_de_linea_final_no_es_valido():
+    f, _, _ = crear(rutas_ok())
+    assert f.consultar(Radicado("1" * 23 + "\n")).estado == FALLIDA

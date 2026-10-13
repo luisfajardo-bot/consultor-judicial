@@ -21,4 +21,9 @@ La columna **Decisión** trae un desplegable: Pendiente, Confirmada, Descartada.
 ## Aviso
 `avisar` escribe en `reportes\avisos.log` con fecha y hora. Es el único punto de aviso: el canal real (correo o Teams) lo define Sistemas ([[Fase de escalamiento]]).
 
+## Cambios tras la auditoría (2026-10-13)
+- `leer_decisiones` omite, con un aviso, los archivos de más de 20 MB y cualquiera que falle al leerse. Importa las decisiones de un archivo solo si lo leyó completo.
+- El reporte se escribe en un `.tmp` y luego se reemplaza de forma atómica.
+- [[main]] avisa cuántas decisiones se registraron.
+
 **Depende de:** openpyxl y [[store]]. Usado por [[main]].

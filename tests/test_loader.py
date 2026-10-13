@@ -110,3 +110,151 @@ def test_crear_fuente_excel_y_tipo_desconocido(tmp_path):
     assert isinstance(crear_fuente(cfg), FuenteExcel)
     with pytest.raises(ValueError, match="sql"):
         crear_fuente({"tipo": "sql"})
+
+
+@pytest.mark.parametrize(
+    "celda, esperados",
+    [
+        # dos radicados pegados sin separador (46 dígitos)
+        (
+            "0500131050232019005610005001310502320190056101",
+            ["05001310502320190056100", "05001310502320190056101"],
+        ),
+        (
+            "68081333300120210014100/TRIBUNAL68081333300120210014102",
+            ["68081333300120210014100", "68081333300120210014102"],
+        ),
+        (
+            "73001333300720220024300tribunal73001333300720220024301",
+            ["73001333300720220024300", "73001333300720220024301"],
+        ),
+        (
+            "68081333300220210021700SEGUNDAINSTANCIA68081333300220210021702",
+            ["68081333300220210021700", "68081333300220210021702"],
+        ),
+        # un radicado con texto alrededor
+        ("05266310500220230011400SEGUNDAINSTANCIAc", ["05266310500220230011400"]),
+        ("otrojuzgado11001310303720250036100", ["11001310303720250036100"]),
+        (
+            "JUZGADO1CIVILDELCIRCUITODEITAGUI05360310300120260013800",
+            ["05360310300120260013800"],
+        ),
+        # con separadores y texto
+        ("Juzgado 1 Civil: 11001-40-03-077-2021-01147-00 (ver)", ["11001400307720210114700"]),
+    ],
+)
+def test_saca_los_radicados_de_celdas_con_texto_o_pegados(tmp_path, celda, esperados):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[celda, "ICEIN", "", "", "Activo"]])
+    assert [r.radicado for r in fuente(ruta).cargar()] == esperados
+
+
+def test_dos_radicados_en_una_celda_comparten_los_datos_de_la_fila(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(
+        ruta,
+        [
+            ["11001400307720210114700", "OTRA", "", "", "Activo"],
+            ["11001400307720210114700/TRIBUNAL11001400307720210114702", "ICEIN", "Juz", "Demandado", "Activo"],
+        ],
+    )
+    por = {r.radicado: r for r in fuente(ruta).cargar()}
+    assert list(por) == ["11001400307720210114700", "11001400307720210114702"]
+    assert por["11001400307720210114700"].empresa == "OTRA / ICEIN"
+    assert por["11001400307720210114702"].empresa == "ICEIN"
+
+
+def test_sin_23_digitos_en_ninguna_parte_se_conserva_el_texto_limpio(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [["sin radicado 12-34", "ICEIN", "", "", "Activo"]])
+    assert [r.radicado for r in fuente(ruta).cargar()] == ["sinradicado1234"]
+
+
+@pytest.mark.parametrize(
+    "celda",
+    [
+        "11001400307720210114700-2026",
+        "11001400307720210114700.1",
+        "11001400307720210114700 - 2",
+        "11001400307720210114700 2026-01-15",
+    ],
+)
+def test_un_radicado_pegado_a_otros_numeros_con_separador_se_conserva(tmp_path, celda):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[celda, "ICEIN", "", "", "Activo"]])
+    assert [r.radicado for r in fuente(ruta).cargar()] == ["11001400307720210114700"]
+
+
+def test_una_celda_numerica_se_marca_como_tal_y_no_como_un_numero_recortado(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[1.10014003077202e22, "ICEIN", "", "", "Activo"]])
+    (r,) = fuente(ruta).cargar()
+    assert r.radicado.startswith("numérico:")
+
+
+def test_cuenta_las_filas_con_datos_pero_sin_radicado(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(
+        ruta,
+        [
+            [None, "ICEIN", "Juzgado 7", "", "Activo"],  # datos sin radicado
+            [None, None, None, None, None],  # fila vacía: no cuenta
+            ["11001400307720210114700", "ICEIN", "", "", "Activo"],
+        ],
+    )
+    f = fuente(ruta)
+    assert len(f.cargar()) == 1
+    assert f.filas_sin_radicado == 1
+
+
+def test_una_fila_sin_radicado_y_con_otro_estado_no_cuenta(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[None, "ICEIN", "", "", "Cerrado"]])
+    f = fuente(ruta, estados_incluidos=["activo"])
+    f.cargar()
+    assert f.filas_sin_radicado == 0
+
+
+R = "11001400307720210114700"
+S = "05001310301520190045600"
+
+
+@pytest.mark.parametrize(
+    "celda, esperado",
+    [
+        ("11001-40-03-077-2021-01147-00 y " + S, {R, S}),
+        (S + " y 11001-40-03-077-2021-01147-00", {R, S}),
+        (R + "\n" + S[:-1], {R, S[:-1]}),
+        (R + " / " + S + "1", {R, S + "1"}),
+        (R + " 2026-01-15", {R}),
+        (R + "-077", {R}),
+        (R + ".1", {R}),
+        ("11001-40-03-077-2021-01147-00-2026", {"110014003077202101147002026"}),
+    ],
+)
+def test_una_celda_con_varios_radicados_no_pierde_ninguno(tmp_path, celda, esperado):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[celda, "ICEIN", "", "", "Activo"]])
+    assert {r.radicado for r in fuente(ruta).cargar()} == esperado
+
+
+def test_el_estado_no_cuenta_como_dato_de_una_fila_sin_radicado(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[None, None, None, None, "Activo"]])
+    f = fuente(ruta, estados_incluidos=["activo"])
+    f.cargar()
+    assert f.filas_sin_radicado == 0
+    hacer_excel(ruta, [[None, None, "Juzgado 7", None, "Activo"]])
+    f.cargar()
+    assert f.filas_sin_radicado == 1
+
+
+def test_filas_sin_radicado_se_reinicia_entre_cargas(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[None, "ICEIN", "", "", "Activo"]])
+    f = fuente(ruta)
+    f.cargar()
+    assert f.filas_sin_radicado == 1
+    hacer_excel(ruta, [[R, "ICEIN", "", "", "Activo"]])
+    f.cargar()
+    assert f.filas_sin_radicado == 0

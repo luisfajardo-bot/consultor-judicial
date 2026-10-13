@@ -4,7 +4,7 @@ Herramienta que consulta lunes, miércoles y viernes los radicados activos del g
 
 No decide nada jurídico. El seguimiento manual sigue en paralelo.
 
-**Estado (2026-10-08):** construida y probada contra el portal real con 41 procesos. 141 pruebas en verde, en Windows y en Linux. Tarea programada lista para el viernes 9-oct a las 9:00, que será el ciclo de referencia.
+**Estado (2026-10-13):** construida y probada contra el portal real con 41 procesos. 257 pruebas en verde, en Windows y en Linux. Tarea programada lista para el viernes 9-oct a las 9:00, que será el ciclo de referencia.
 
 ## Mapa
 

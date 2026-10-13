@@ -3,13 +3,14 @@ from datetime import datetime, timedelta
 from consultor.models import EXITOSA, Actuacion, Consulta
 
 
-def act(i, fecha="2026-05-15", texto="Al despacho", radicado="11001400307720210114700", anotacion=""):
+def act(i, fecha="2026-05-15", texto="Al despacho", radicado="11001400307720210114700", anotacion="", registro=""):
     return Actuacion(
         id_reg_actuacion=i,
         radicado=radicado,
         fecha_actuacion=fecha,
         actuacion=texto,
         anotacion=anotacion,
+        fecha_registro=registro,
     )
 
 

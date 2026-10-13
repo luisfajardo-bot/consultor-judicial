@@ -42,3 +42,64 @@ def test_misma_fecha_distinta_actuacion_se_detecta():
     # CA2: una actuación nueva con la misma fecha que la última no se puede perder
     v = comparar(ok(act(2, fecha="2026-05-15"), act(1, fecha="2026-05-15")), {1}, True)
     assert v.resultado == POSIBLE_NOVEDAD
+
+
+def test_nuevas_con_fecha_anterior_a_la_ultima_conocida_se_reportan_todas():
+    # El despacho puede registrar hoy actuaciones con fechas viejas: se reportan todas
+    # las que no se habían visto, sin importar su fecha.
+    v = comparar(
+        ok(
+            act(13, fecha="2026-10-06"),
+            act(12, fecha="2026-10-07"),
+            act(11, fecha="2026-09-30"),
+            act(10, fecha="2026-10-07"),
+        ),
+        {10, 12},
+        True,
+    )
+    assert v.resultado == POSIBLE_NOVEDAD
+    assert {a.id_reg_actuacion for a in v.nuevas} == {11, 13}
+
+
+def test_primera_consulta_alerta_las_registradas_desde_la_fecha_de_corte():
+    # El 08/10 se registró una actuación con fecha del 06/10: cuenta por la fecha de registro.
+    v = comparar(
+        ok(
+            act(3, fecha="2026-10-06", registro="2026-10-08"),
+            act(2, fecha="2026-10-07", registro="2026-10-07"),
+            act(1, fecha="2026-05-15", registro="2026-05-15"),
+        ),
+        set(),
+        False,
+        desde="2026-10-07",
+    )
+    assert v.resultado == POSIBLE_NOVEDAD
+    assert [a.id_reg_actuacion for a in v.nuevas] == [3, 2]
+    assert "referencia inicial" in v.motivo
+
+
+def test_primera_consulta_sin_recientes_sigue_siendo_referencia():
+    v = comparar(ok(act(1, registro="2026-05-15")), set(), False, desde="2026-10-07")
+    assert v.resultado == SIN_CAMBIO
+    assert v.motivo == "referencia inicial"
+
+
+def test_primera_consulta_sin_fecha_de_registro_usa_la_fecha_de_actuacion():
+    v = comparar(ok(act(1, fecha="2026-10-08", registro="")), set(), False, desde="2026-10-07")
+    assert v.resultado == POSIBLE_NOVEDAD
+
+
+def test_primera_consulta_sin_fecha_de_corte_no_alerta():
+    v = comparar(ok(act(1, fecha="2026-10-08", registro="2026-10-08")), set(), False)
+    assert v.resultado == SIN_CAMBIO
+
+
+def test_primera_consulta_ignora_lo_ya_alertado():
+    v = comparar(ok(act(1, registro="2026-10-08")), {1}, False, desde="2026-10-07")
+    assert v.resultado == SIN_CAMBIO
+
+
+def test_primera_consulta_actuacion_sin_ninguna_fecha_se_alerta():
+    # sin fecha no se puede saber si es vieja: se avisa de más antes que callar
+    v = comparar(ok(act(1, fecha="", registro="")), set(), False, desde="2026-10-07")
+    assert v.resultado == POSIBLE_NOVEDAD

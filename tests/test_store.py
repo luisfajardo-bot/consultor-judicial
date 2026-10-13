@@ -111,6 +111,16 @@ def test_resumen_cuenta_consultas(store):
     assert store.resumen(c2) == {"total": 1, "exitosas": 1, "fallidas": 0, "novedades": 1}
 
 
+def test_la_actuacion_anterior_se_lee_aunque_la_actuacion_sea_compartida(store):
+    otro = Radicado("11001400307720210114702")
+    store.registrar_radicado(otro)
+    c = store.iniciar_ciclo(AHORA)
+    consulta = ok(act(1, fecha="2026-05-15", texto="Auto"))
+    store.registrar_resultado(c, R.radicado, consulta, Veredicto(SIN_CAMBIO), "", AHORA)
+    store.registrar_resultado(c, otro.radicado, consulta, Veredicto(SIN_CAMBIO), "", AHORA)
+    assert store.ultima_actuacion(otro.radicado) == "2026-05-15: Auto"
+
+
 def test_ultima_actuacion_devuelve_la_mas_reciente(store):
     c = store.iniciar_ciclo(AHORA)
     store.registrar_resultado(
@@ -165,14 +175,16 @@ def test_tiene_referencia_usa_indice_y_no_recorre_la_tabla(store):
     assert "SCAN" not in p and "ix_consulta_radicado" in p
 
 
-def test_ultima_actuacion_no_necesita_ordenar_aparte(store):
-    p = plan(
-        store,
-        "SELECT fecha_actuacion, actuacion FROM actuacion WHERE radicado = ? "
-        "ORDER BY fecha_actuacion DESC, id_reg_actuacion DESC LIMIT 1",
-        (R.radicado,),
+def test_ultima_actuacion_es_la_mas_reciente_y_desempata_por_id(store):
+    c = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(
+        c, R.radicado, ok(act(1, fecha="2026-06-01"), act(3, fecha="2026-07-01"), act(2, fecha="2026-07-01")),
+        Veredicto(SIN_CAMBIO), "", AHORA,
     )
-    assert "TEMP B-TREE" not in p and "ix_actuacion_radicado_fecha" in p
+    assert store.ultima_actuacion(R.radicado).startswith("2026-07-01")
+    assert store.con.execute(
+        "SELECT id_reg_actuacion FROM actuacion WHERE fecha_actuacion = '2026-07-01' ORDER BY id_reg_actuacion DESC"
+    ).fetchone()[0] == 3
 
 
 def test_consultas_de_alertas_usan_indice(store):
@@ -311,3 +323,87 @@ def test_ultimo_cierre_ignora_los_ciclos_cancelados(store):
     a = store.iniciar_ciclo(AHORA)
     store.cerrar_ciclo(a, "Cancelado por el usuario", AHORA + timedelta(minutes=2))
     assert store.ultimo_cierre() is None
+
+
+def test_una_actuacion_vista_bajo_otro_radicado_no_es_nueva(store):
+    c = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(c, R.radicado, ok(act(1), act(2)), Veredicto(SIN_CAMBIO), "", AHORA)
+    assert store.ids_vistos(R.radicado, [1, 2, 3]) == {1, 2}
+    assert store.ids_vistos("OTRO", [1, 2, 3]) == set()  # solo guardadas en silencio por R
+    assert store.ids_vistos("OTRO", []) == set()
+    assert store.ids_vistos("OTRO", range(10_000, 10_700)) == set()  # más de un tramo de consulta
+    c2 = store.iniciar_ciclo(AHORA + timedelta(days=1))
+    store.registrar_resultado(
+        c2, R.radicado, ok(act(2), act(1)), Veredicto(POSIBLE_NOVEDAD, nuevas=(act(2),)), "", AHORA
+    )
+    assert store.ids_vistos("OTRO", [1, 2, 3]) == {2}  # ya alertada: no se repite
+
+
+def test_la_tabla_de_conocimiento_se_rellena_una_sola_vez_al_migrar(tmp_path):
+    ruta = tmp_path / "bd.sqlite"
+    s = Store(ruta)
+    s.registrar_radicado(R)
+    c = s.iniciar_ciclo(AHORA)
+    s.registrar_resultado(c, R.radicado, ok(act(1), act(2)), Veredicto(SIN_CAMBIO), "", AHORA)
+    s.con.execute("DROP TABLE actuacion_radicado")
+    s.con.commit()
+    s.con.close()
+    s2 = Store(ruta)
+    assert s2.ids_conocidos(R.radicado) == {1, 2}
+    s2.con.close()
+    s3 = Store(ruta)
+    assert s3.ids_conocidos(R.radicado) == {1, 2}
+    assert s3.con.execute("SELECT COUNT(*) FROM actuacion_radicado").fetchone()[0] == 2
+
+
+def test_una_novedad_sin_alerta_igual_sale_en_el_reporte(store):
+    c = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(
+        c, R.radicado, ok(act(1)), Veredicto(POSIBLE_NOVEDAD, nuevas=()), "", AHORA
+    )
+    filas = store.filas_reporte(c)
+    assert [f["radicado"] for f in filas] == [R.radicado]
+    assert "sin alerta" in filas[0]["motivo"]
+
+
+def test_un_ciclo_interrumpido_no_cuenta_como_ultimo_cierre(store):
+    c = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(c, "Completo", AHORA)
+    manana = AHORA + timedelta(days=1)
+    store.iniciar_ciclo(AHORA - timedelta(hours=1))  # un ciclo que quedó abierto
+    store.cerrar_interrumpidos(manana)  # al día siguiente se marca Interrumpido con fin = manana
+    assert store.ultimo_cierre() == AHORA
+
+
+def _base_con_dos_radicados(tmp_path):
+    ruta = tmp_path / "datos.db"
+    s = Store(ruta)
+    a, b = Radicado("11001400307720210114700"), Radicado("11001400307720210114701")
+    s.registrar_radicados([a, b])
+    c = s.iniciar_ciclo(AHORA)
+    for r in (a, b):
+        s.registrar_resultado(c, r.radicado, ok(act(1), act(2)), Veredicto(SIN_CAMBIO), "", AHORA)
+    return ruta, s, a, b
+
+
+def test_la_migracion_copia_lo_conocido_entre_radicados_del_mismo_proceso(tmp_path):
+    ruta, s, a, b = _base_con_dos_radicados(tmp_path)
+    s.con.execute("DROP TABLE actuacion_radicado")
+    s.con.commit()
+    s.con.close()
+    s2 = Store(ruta)
+    assert s2.ids_conocidos(b.radicado) == {1, 2}
+    assert s2.ids_conocidos(a.radicado) == {1, 2}
+
+
+def test_la_migracion_se_repite_si_la_tabla_quedo_vacia_y_no_duplica(tmp_path):
+    ruta, s, a, b = _base_con_dos_radicados(tmp_path)
+    s.con.execute("DELETE FROM actuacion_radicado")
+    s.con.commit()
+    s.con.close()
+    s2 = Store(ruta)
+    assert s2.ids_conocidos(b.radicado) == {1, 2}
+    n = s2.con.execute("SELECT COUNT(*) FROM actuacion_radicado").fetchone()[0]
+    s2.con.close()
+    s3 = Store(ruta)
+    assert s3.con.execute("SELECT COUNT(*) FROM actuacion_radicado").fetchone()[0] == n

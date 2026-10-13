@@ -15,3 +15,6 @@ Tomadas del campo 6 de la spec inicial, con cómo quedó cada una implementada.
 | R9 | Nunca escribe en el cuadro oficial ni envía nada fuera del equipo jurídico | El Excel se abre solo en lectura. La ventana no envía datos | [[loader]], [[reporter]] |
 
 Ver [[Validación humana]] para lo que queda en manos de personas.
+
+## Ajuste a R2: primera consulta con actuaciones recientes
+El ciclo 1 (2026-10-09) dejó en silencio actuaciones del 07 y 08/10 en dos radicados. Ahora, en la primera consulta de un radicado, lo **registrado** (fecha de registro, no de actuación) en los últimos N días sale como POSIBLE NOVEDAD con motivo "referencia inicial". N vale 7 por defecto, se cambia en la pantalla (`datos/ajustes.json`) o en `[primera_consulta]` de `config.toml`; 0 deja todo como referencia. Código: [[comparator]] (parámetro `desde`) y `ajustes.py`. Los radicados con referencia ya guardada no se reevalúan.

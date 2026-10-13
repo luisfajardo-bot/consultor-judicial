@@ -1,6 +1,10 @@
+import zipfile
 from datetime import datetime
 
-from openpyxl import load_workbook
+import pytest
+from openpyxl import Workbook, load_workbook
+
+import consultor.reporter as reporter_mod
 
 from consultor.models import NO_VERIFICADO, POSIBLE_NOVEDAD, SIN_CAMBIO
 from consultor.reporter import LEYENDA, avisar, escribir_reporte, leer_decisiones
@@ -142,3 +146,55 @@ def test_id_de_alerta_invalido_se_avisa_y_no_descarta_las_demas_decisiones(tmp_p
     avisos = []
     assert leer_decisiones(tmp_path, avisos.append) == [(8, "Descartada", "Alisson Rengifo")]
     assert any("ID de alerta" in a for a in avisos)
+
+
+def _libro(ruta, decisiones):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Alertas"
+    ws.append(["ID alerta", "Decisión", "Validó"])
+    for d in decisiones:
+        ws.append(d)
+    wb.save(ruta)
+
+
+def _dañar_xml(ruta):
+    tmp = ruta.with_name(ruta.name + ".copia")
+    with zipfile.ZipFile(ruta) as zin, zipfile.ZipFile(tmp, "w") as zout:
+        for item in zin.infolist():
+            datos = zin.read(item.filename)
+            if item.filename.startswith("xl/worksheets/"):
+                datos = datos[: len(datos) // 2]  # XML truncado
+            zout.writestr(item, datos)
+    tmp.replace(ruta)
+
+
+def test_un_reporte_con_xml_dañado_se_avisa_y_no_tumba_la_lectura(tmp_path):
+    _libro(tmp_path / "reporte_a.xlsx", [[1, "Confirmada", "Ana"]])
+    malo = tmp_path / "reporte_b.xlsx"
+    _libro(malo, [[i, "Confirmada", "Ana"] for i in range(100, 300)])
+    _dañar_xml(malo)
+    avisos = []
+    assert leer_decisiones(tmp_path, avisos.append) == [(1, "Confirmada", "Ana")]
+    assert any("reporte_b.xlsx" in a for a in avisos)
+
+
+def test_un_reporte_demasiado_grande_se_salta_con_aviso(tmp_path, monkeypatch):
+    _libro(tmp_path / "reporte_a.xlsx", [[1, "Confirmada", "Ana"]])
+    monkeypatch.setattr(reporter_mod, "MAX_BYTES_REPORTE", 10)
+    avisos = []
+    assert leer_decisiones(tmp_path, avisos.append) == []
+    assert any("demasiado grande" in a for a in avisos)
+
+
+def test_si_falla_el_guardado_no_queda_un_reporte_a_medias(tmp_path, monkeypatch):
+    def falla(self, ruta):
+        with open(ruta, "wb") as f:
+            f.write(b"PK parcial")
+        raise OSError("disco lleno")
+
+    monkeypatch.setattr(Workbook, "save", falla)
+    with pytest.raises(OSError):
+        escribir(tmp_path, [fila()])
+    assert list(tmp_path.glob("reporte_*.xlsx")) == []
+    assert list(tmp_path.iterdir()) == []

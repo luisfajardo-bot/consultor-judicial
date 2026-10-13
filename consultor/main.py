@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .ajustes import DIAS_POR_DEFECTO, leer_dias
 from .bloqueo import Bloqueo, CicloEnCurso
 from .comparator import comparar
 from .consola import barra
@@ -38,8 +39,16 @@ class Resumen:
     pendientes: int = 0
 
 
+def _desde(primer_intento, ahora: datetime, dias: int) -> str:
+    """Corte de la primera consulta exitosa, anclado al primer intento del radicado: si estuvo
+    fallando varios días, lo registrado desde que entró a la lista sigue contando."""
+    if dias <= 0:
+        return ""
+    return ((primer_intento or ahora) - timedelta(days=dias)).date().isoformat()
+
+
 def correr_ciclo(
-    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30, cancelado=None
+    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30, cancelado=None, alertar_primera_dias=0
 ) -> Resumen:
     if not radicados:
         avisar_fn(
@@ -47,8 +56,11 @@ def correr_ciclo(
             "revisar la fuente y los filtros de estado."
         )
         return Resumen(0, 0, 0, 0, 0, "Lista vacía", None)
+    aplicadas = 0
     for alerta_id, decision, usuario in leer_decisiones(carpeta_reportes, avisar_fn):
-        store.registrar_decision(alerta_id, decision, usuario or validador, ahora())
+        aplicadas += store.registrar_decision(alerta_id, decision, usuario or validador, ahora())
+    if aplicadas:
+        avisar_fn(f"Se registraron {aplicadas} decisión(es) tomadas en los reportes.")
 
     interrumpidos = store.cerrar_interrumpidos(ahora())
     if interrumpidos:
@@ -99,8 +111,12 @@ def correr_ciclo(
                     f"espere al menos {min_minutos} minutos."
                 )
                 break
+            desde = _desde(store.primer_intento(r.radicado), ahora(), alertar_primera_dias)
             veredicto = comparar(
-                consulta, store.ids_conocidos(r.radicado), store.tiene_referencia(r.radicado)
+                consulta,
+                store.ids_vistos(r.radicado, (a.id_reg_actuacion for a in consulta.actuaciones)),
+                store.tiene_referencia(r.radicado),
+                desde,
             )
             store.registrar_resultado(
                 ciclo_id, r.radicado, consulta, veredicto, store.ultima_actuacion(r.radicado), ahora()
@@ -244,7 +260,14 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                     )
                     aviso(msg)
                     return Ejecucion(3, msg, None)
-            radicados = crear_fuente(cfg["fuente"]).cargar()
+            fuente = crear_fuente(cfg["fuente"])
+            radicados = fuente.cargar()
+            sin_radicado = getattr(fuente, "filas_sin_radicado", 0)
+            if sin_radicado:
+                aviso(
+                    f"{sin_radicado} fila(s) del Excel tienen datos pero van sin radicado "
+                    "y no se consultan: revisar el cuadro."
+                )
             if solo_radicado:
                 radicados = [r for r in radicados if r.radicado == solo_radicado]
             portal = cfg["portal"]
@@ -278,6 +301,10 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                 parcial=bool(solo_radicado),
                 min_minutos=minimo,
                 cancelado=cancelado,
+                alertar_primera_dias=leer_dias(
+                    Path(cfg["salida"]["base_datos"]).parent,
+                    cfg.get("primera_consulta", {}).get("alertar_ultimos_dias", DIAS_POR_DEFECTO),
+                ),
             )
             _mantenimiento(cfg, store, aviso, datetime.now().date())
     except CicloEnCurso as e:

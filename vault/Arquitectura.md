@@ -1,6 +1,6 @@
 # Arquitectura
 
-Pipeline lineal. Cada módulo tiene una responsabilidad y se prueba solo. Estado: 141 pruebas, probado en Windows (Python 3.14) y en Linux (Python 3.12).
+Pipeline lineal. Cada módulo tiene una responsabilidad y se prueba solo. Estado: 257 pruebas, probado en Windows (Python 3.14) y en Linux (Python 3.12).
 
 ```mermaid
 flowchart LR
