@@ -136,7 +136,7 @@ class Store:
 
     def ultimo_cierre(self) -> datetime | None:
         f = self.con.execute("SELECT MAX(fin) AS fin FROM ciclo WHERE fin IS NOT NULL AND parcial = 0 "
-            "AND estado NOT LIKE 'Cancelado%'").fetchone()
+            "AND estado NOT LIKE 'Cancelado%' AND estado NOT LIKE 'Interrumpido%'").fetchone()
         return datetime.fromisoformat(f["fin"]) if f["fin"] else None
 
     def ultimo_ciclo(self) -> dict | None:

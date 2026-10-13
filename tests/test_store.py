@@ -362,3 +362,12 @@ def test_una_novedad_sin_alerta_igual_sale_en_el_reporte(store):
     filas = store.filas_reporte(c)
     assert [f["radicado"] for f in filas] == [R.radicado]
     assert "sin alerta" in filas[0]["motivo"]
+
+
+def test_un_ciclo_interrumpido_no_cuenta_como_ultimo_cierre(store):
+    c = store.iniciar_ciclo(AHORA)
+    store.cerrar_ciclo(c, "Completo", AHORA)
+    manana = AHORA + timedelta(days=1)
+    store.iniciar_ciclo(AHORA - timedelta(hours=1))  # un ciclo que quedó abierto
+    store.cerrar_interrumpidos(manana)  # al día siguiente se marca Interrumpido con fin = manana
+    assert store.ultimo_cierre() == AHORA
