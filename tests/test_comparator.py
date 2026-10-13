@@ -97,3 +97,9 @@ def test_primera_consulta_sin_fecha_de_corte_no_alerta():
 def test_primera_consulta_ignora_lo_ya_alertado():
     v = comparar(ok(act(1, registro="2026-10-08")), {1}, False, desde="2026-10-07")
     assert v.resultado == SIN_CAMBIO
+
+
+def test_primera_consulta_actuacion_sin_ninguna_fecha_se_alerta():
+    # sin fecha no se puede saber si es vieja: se avisa de más antes que callar
+    v = comparar(ok(act(1, fecha="", registro="")), set(), False, desde="2026-10-07")
+    assert v.resultado == POSIBLE_NOVEDAD

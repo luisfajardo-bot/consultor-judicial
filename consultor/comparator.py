@@ -8,6 +8,11 @@ from .models import (
 )
 
 
+def _reciente(a, desde: str) -> bool:
+    fecha = a.fecha_registro or a.fecha_actuacion
+    return bool(desde) and (not fecha or fecha >= desde)
+
+
 def comparar(
     consulta: Consulta, conocidas: set[int], tiene_referencia: bool, desde: str = ""
 ) -> Veredicto:
@@ -24,9 +29,7 @@ def comparar(
         recientes = tuple(
             a
             for a in consulta.actuaciones
-            if a.id_reg_actuacion not in conocidas
-            and desde
-            and (a.fecha_registro or a.fecha_actuacion) >= desde
+            if a.id_reg_actuacion not in conocidas and _reciente(a, desde)
         )
         if recientes:
             return Veredicto(POSIBLE_NOVEDAD, nuevas=recientes, motivo="referencia inicial")
