@@ -213,3 +213,48 @@ def test_una_fila_sin_radicado_y_con_otro_estado_no_cuenta(tmp_path):
     f = fuente(ruta, estados_incluidos=["activo"])
     f.cargar()
     assert f.filas_sin_radicado == 0
+
+
+R = "11001400307720210114700"
+S = "05001310301520190045600"
+
+
+@pytest.mark.parametrize(
+    "celda, esperado",
+    [
+        ("11001-40-03-077-2021-01147-00 y " + S, {R, S}),
+        (S + " y 11001-40-03-077-2021-01147-00", {R, S}),
+        (R + "\n" + S[:-1], {R, S[:-1]}),
+        (R + " / " + S + "1", {R, S + "1"}),
+        (R + " 2026-01-15", {R}),
+        (R + "-077", {R}),
+        (R + ".1", {R}),
+        ("11001-40-03-077-2021-01147-00-2026", {"110014003077202101147002026"}),
+    ],
+)
+def test_una_celda_con_varios_radicados_no_pierde_ninguno(tmp_path, celda, esperado):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[celda, "ICEIN", "", "", "Activo"]])
+    assert {r.radicado for r in fuente(ruta).cargar()} == esperado
+
+
+def test_el_estado_no_cuenta_como_dato_de_una_fila_sin_radicado(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[None, None, None, None, "Activo"]])
+    f = fuente(ruta, estados_incluidos=["activo"])
+    f.cargar()
+    assert f.filas_sin_radicado == 0
+    hacer_excel(ruta, [[None, None, "Juzgado 7", None, "Activo"]])
+    f.cargar()
+    assert f.filas_sin_radicado == 1
+
+
+def test_filas_sin_radicado_se_reinicia_entre_cargas(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[None, "ICEIN", "", "", "Activo"]])
+    f = fuente(ruta)
+    f.cargar()
+    assert f.filas_sin_radicado == 1
+    hacer_excel(ruta, [[R, "ICEIN", "", "", "Activo"]])
+    f.cargar()
+    assert f.filas_sin_radicado == 0
