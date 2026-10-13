@@ -27,6 +27,7 @@ ACTUACIONES = {
             "fechaInicial": None,
             "fechaFinal": None,
             "fechaRegistro": "2026-05-15T00:00:00",
+            "cant": 2,
         },
         {
             "idRegActuacion": 2702295560,
@@ -36,6 +37,7 @@ ACTUACIONES = {
             "fechaInicial": None,
             "fechaFinal": None,
             "fechaRegistro": "2026-04-29T00:00:00",
+            "cant": 2,
         },
     ]
 }
@@ -374,3 +376,60 @@ def test_cancelar_durante_la_espera_de_un_bloqueo_interrumpe_la_consulta():
     with pytest.raises(CicloCancelado):
         f.consultar(Radicado("11001400307720210114700"))
     assert dormidos and all(d <= 1.0 for d in dormidos)
+
+
+def _con_actuaciones(lista):
+    rutas = rutas_ok()
+    rutas["Actuaciones"] = RespuestaFalsa(200, {"actuaciones": lista})
+    return rutas
+
+
+def _a(**kw):
+    base = {
+        "idRegActuacion": 1,
+        "fechaActuacion": "2026-10-08T00:00:00",
+        "actuacion": "X",
+        "anotacion": None,
+        "fechaRegistro": "2026-10-08T00:00:00",
+        "cant": 1,
+    }
+    base.update(kw)
+    return base
+
+
+@pytest.mark.parametrize("malo", [None, "17", True, 1.5])
+def test_un_id_de_actuacion_que_no_es_entero_es_error_visible(malo):
+    f, _, _ = crear(_con_actuaciones([_a(idRegActuacion=malo)]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+@pytest.mark.parametrize("cant", [None, "1", 0])
+def test_cant_inconsistente_es_error_visible(cant):
+    f, _, _ = crear(_con_actuaciones([_a(cant=cant)]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+def test_cant_ausente_es_error_visible():
+    actuacion = _a()
+    del actuacion["cant"]
+    f, _, _ = crear(_con_actuaciones([actuacion]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+@pytest.mark.parametrize("campo", ["fechaActuacion", "fechaRegistro"])
+def test_una_fecha_con_otro_formato_es_error_visible(campo):
+    f, _, _ = crear(_con_actuaciones([_a(**{campo: "08/10/2026"})]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+def test_una_fecha_de_registro_vacia_sigue_siendo_exitosa():
+    f, _, _ = crear(_con_actuaciones([_a(fechaRegistro=None)]))
+    c = f.consultar(RAD)
+    assert c.estado == EXITOSA
+    assert c.actuaciones[0].fecha_registro == ""
+
+
+def test_digitos_unicode_no_son_un_radicado_valido():
+    f, _, _ = crear(rutas_ok())
+    c = f.consultar(Radicado("١" * 23))  # dígitos arábigos
+    assert c.estado == FALLIDA
