@@ -39,7 +39,7 @@ class Resumen:
 
 
 def correr_ciclo(
-    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30, cancelado=None
+    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30, cancelado=None, alertar_primera_dias=0
 ) -> Resumen:
     if not radicados:
         avisar_fn(
@@ -58,6 +58,9 @@ def correr_ciclo(
     detenido = bloqueado = cancelo = False
     ultimo = len(radicados) - 1
     store.registrar_radicados(radicados)
+    desde = (
+        (ahora() - timedelta(days=alertar_primera_dias)).date().isoformat() if alertar_primera_dias > 0 else ""
+    )
 
     def avisar_cancelado():
         pendientes = store.pendientes(ciclo_id, len(radicados))
@@ -100,7 +103,7 @@ def correr_ciclo(
                 )
                 break
             veredicto = comparar(
-                consulta, store.ids_conocidos(r.radicado), store.tiene_referencia(r.radicado)
+                consulta, store.ids_conocidos(r.radicado), store.tiene_referencia(r.radicado), desde
             )
             store.registrar_resultado(
                 ciclo_id, r.radicado, consulta, veredicto, store.ultima_actuacion(r.radicado), ahora()
@@ -278,6 +281,7 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                 parcial=bool(solo_radicado),
                 min_minutos=minimo,
                 cancelado=cancelado,
+                alertar_primera_dias=cfg.get("primera_consulta", {}).get("alertar_ultimos_dias", 7),
             )
             _mantenimiento(cfg, store, aviso, datetime.now().date())
     except CicloEnCurso as e:

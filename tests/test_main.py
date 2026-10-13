@@ -635,3 +635,17 @@ def test_un_ciclo_rechazado_no_ejecuta_mantenimiento(tmp_path, monkeypatch):
         b.publicar("09:00 | 1 de 2")
         assert main_mod.ejecutar_ciclo(cfg).codigo == 3  # por el candado
     assert llamadas == []
+
+
+def test_primera_vez_alerta_lo_registrado_en_los_ultimos_dias_configurados(tmp_path):
+    store, reloj = Store(":memory:"), Reloj()  # 2026-10-12
+    f = FetcherFalso(
+        {R1.radicado: ok(act(2, fecha="2026-10-08", registro="2026-10-08"), act(1, registro="2026-05-15"))}
+    )
+    r = correr_ciclo(
+        [R1], f, store, tmp_path, "Alisson Rengifo", 0.5, [].append, reloj, alertar_primera_dias=7
+    )
+    assert r.novedades == 1
+    enc, filas = hoja_alertas(r.reporte)
+    assert filas[0][enc.index("Resultado")] == "POSIBLE NOVEDAD"
+    assert filas[0][enc.index("Fecha actuación detectada")] == "2026-10-08"
