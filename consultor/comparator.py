@@ -22,7 +22,11 @@ def comparar(
         return Veredicto(NO_VERIFICADO, motivo=consulta.motivo)
     if not tiene_referencia:
         recientes = tuple(
-            a for a in consulta.actuaciones if desde and (a.fecha_registro or a.fecha_actuacion) >= desde
+            a
+            for a in consulta.actuaciones
+            if a.id_reg_actuacion not in conocidas
+            and desde
+            and (a.fecha_registro or a.fecha_actuacion) >= desde
         )
         if recientes:
             return Veredicto(POSIBLE_NOVEDAD, nuevas=recientes, motivo="referencia inicial")

@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -23,6 +24,9 @@ CREATE TABLE IF NOT EXISTS actuacion (
 DROP INDEX IF EXISTS ix_actuacion_radicado;
 CREATE INDEX IF NOT EXISTS ix_actuacion_radicado_fecha
     ON actuacion(radicado, fecha_actuacion DESC, id_reg_actuacion DESC);
+CREATE TABLE IF NOT EXISTS actuacion_radicado (
+    radicado TEXT NOT NULL, id_reg_actuacion INTEGER NOT NULL,
+    PRIMARY KEY (radicado, id_reg_actuacion)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS ciclo (
     id INTEGER PRIMARY KEY AUTOINCREMENT, inicio TEXT NOT NULL, fin TEXT,
     estado TEXT NOT NULL, parcial INTEGER NOT NULL DEFAULT 0);
@@ -80,7 +84,13 @@ class Store:
             Path(ruta).parent.mkdir(parents=True, exist_ok=True)
         self.con = sqlite3.connect(str(ruta))
         self.con.row_factory = sqlite3.Row
+        tablas = {f["name"] for f in self.con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         self.con.executescript(ESQUEMA)
+        if "actuacion_radicado" not in tablas:  # migración única: lo guardado hasta hoy
+            with self.con:
+                self.con.execute(
+                    "INSERT OR IGNORE INTO actuacion_radicado SELECT radicado, id_reg_actuacion FROM actuacion"
+                )
         if "parcial" not in {f["name"] for f in self.con.execute("PRAGMA table_info(ciclo)")}:
             with self.con:
                 self.con.execute("ALTER TABLE ciclo ADD COLUMN parcial INTEGER NOT NULL DEFAULT 0")
@@ -178,24 +188,25 @@ class Store:
 
     def ids_conocidos(self, radicado: str) -> set[int]:
         filas = self.con.execute(
-            "SELECT id_reg_actuacion FROM actuacion WHERE radicado = ?", (radicado,)
+            "SELECT id_reg_actuacion FROM actuacion_radicado WHERE radicado = ?", (radicado,)
         )
         return {f["id_reg_actuacion"] for f in filas}
 
-    def ids_vistos(self, ids) -> set[int]:
-        """Cuáles de estos ids ya están guardados, bajo cualquier radicado.
+    def ids_vistos(self, radicado: str, ids: Iterable[int]) -> set[int]:
+        """Cuáles de estos ids son conocidos para este radicado.
 
-        El id de una actuación es único en todo el portal: si dos radicados devuelven el mismo
-        proceso, lo que ya se vio bajo uno no es nuevo para el otro. Las marcas "?" son lo único
-        que se arma con texto; los valores van como parámetros.
+        Dos fuentes: lo que este radicado ya recibió en una consulta exitosa, y lo que ya tiene
+        alerta (se alerta una sola vez en todo el sistema, aunque otro radicado comparta el proceso).
+        Lo guardado en silencio por otro radicado NO cuenta: nadie lo ha alertado. Las marcas "?"
+        son lo único que se arma con texto; los valores van como parámetros.
         """
         ids = list(ids)
-        vistos: set[int] = set()
+        vistos = self.ids_conocidos(radicado)
         for i in range(0, len(ids), 500):  # SQLite limita las variables por consulta
             tramo = ids[i : i + 500]
             marcas = ",".join("?" * len(tramo))
             filas = self.con.execute(
-                f"SELECT id_reg_actuacion FROM actuacion WHERE id_reg_actuacion IN ({marcas})", tramo
+                f"SELECT id_reg_actuacion FROM alerta WHERE id_reg_actuacion IN ({marcas})", tramo
             )
             vistos.update(f["id_reg_actuacion"] for f in filas)
         return vistos
@@ -253,6 +264,10 @@ class Store:
                         )
                         for a in consulta.actuaciones
                     ],
+                )
+                self.con.executemany(
+                    "INSERT OR IGNORE INTO actuacion_radicado (radicado, id_reg_actuacion) VALUES (?, ?)",
+                    [(radicado, a.id_reg_actuacion) for a in consulta.actuaciones],
                 )
                 if consulta.id_proceso:
                     self.con.execute(
@@ -352,7 +367,8 @@ class Store:
                     )
             elif c["resultado"] == POSIBLE_NOVEDAD:
                 # red de seguridad: un radicado consultado nunca puede faltar en el reporte
-                filas.append({**base, "motivo": "novedad sin alerta registrada: verificar en el portal"})
+                motivo = "novedad sin alerta registrada: verificar en el portal"
+                filas.append({**base, "motivo": "; ".join(p for p in (base["motivo"], motivo) if p)})
             else:
                 filas.append(base)
         for a in self.con.execute(PENDIENTES_SQL, (ciclo_id,)):

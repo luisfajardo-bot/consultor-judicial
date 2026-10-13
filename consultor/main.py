@@ -105,7 +105,7 @@ def correr_ciclo(
                 break
             veredicto = comparar(
                 consulta,
-                store.ids_vistos(a.id_reg_actuacion for a in consulta.actuaciones),
+                store.ids_vistos(r.radicado, (a.id_reg_actuacion for a in consulta.actuaciones)),
                 store.tiene_referencia(r.radicado),
                 desde,
             )

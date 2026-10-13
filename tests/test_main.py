@@ -713,3 +713,38 @@ def test_dos_radicados_con_el_mismo_proceso_no_dan_alertas_falsas_ni_desaparecen
     ciclo3 = correr(tmp_path, [R1, r2], f, store, reloj)
     assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1  # una sola alerta
     assert _radicados_en(ciclo3.reporte) == {R1.radicado, r2.radicado}  # ninguno desaparece
+
+
+def test_un_radicado_nuevo_antes_en_la_lista_no_se_traga_la_novedad_de_otro(tmp_path):
+    r2 = Radicado("11001400307720210114702")
+    store, reloj = Store(":memory:"), Reloj()
+    f = FetcherFalso({r2.radicado: ok(act(1), act(2))})
+    correr(tmp_path, [r2], f, store, reloj)
+    reloj.avanzar()
+    nueva = ok(act(3), act(2), act(1))
+    f.respuestas = {R1.radicado: nueva, r2.radicado: nueva}
+    correr(tmp_path, [R1, r2], f, store, reloj)
+    filas = store.con.execute("SELECT radicado FROM alerta").fetchall()
+    assert [x["radicado"] for x in filas] == [r2.radicado]
+
+
+def test_radicado_agregado_despues_no_repite_una_alerta_ya_dada(tmp_path):
+    r2 = Radicado("11001400307720210114702")
+    store, reloj = Store(":memory:"), Reloj()  # 2026-10-12
+    f = FetcherFalso({R1.radicado: ok(act(1, registro="2026-05-15"))})
+
+    def ciclo(radicados):
+        return correr_ciclo(
+            radicados, f, store, tmp_path, "Alisson Rengifo", 0.5, [].append, reloj, alertar_primera_dias=7
+        )
+
+    ciclo([R1])
+    reloj.avanzar()
+    todas = ok(act(3, registro="2026-10-11"), act(1, registro="2026-05-15"))
+    f.respuestas = {R1.radicado: todas}
+    assert ciclo([R1]).novedades == 1
+    reloj.avanzar()
+    f.respuestas = {R1.radicado: todas, r2.radicado: todas}
+    ciclo3 = ciclo([R1, r2])
+    assert ciclo3.novedades == 0
+    assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1

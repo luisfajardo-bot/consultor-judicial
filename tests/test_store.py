@@ -316,9 +316,32 @@ def test_ultimo_cierre_ignora_los_ciclos_cancelados(store):
 def test_una_actuacion_vista_bajo_otro_radicado_no_es_nueva(store):
     c = store.iniciar_ciclo(AHORA)
     store.registrar_resultado(c, R.radicado, ok(act(1), act(2)), Veredicto(SIN_CAMBIO), "", AHORA)
-    assert store.ids_vistos([1, 2, 3]) == {1, 2}
-    assert store.ids_vistos([]) == set()
-    assert store.ids_vistos(range(10_000, 10_700)) == set()  # más de un tramo de consulta
+    assert store.ids_vistos(R.radicado, [1, 2, 3]) == {1, 2}
+    assert store.ids_vistos("OTRO", [1, 2, 3]) == set()  # solo guardadas en silencio por R
+    assert store.ids_vistos("OTRO", []) == set()
+    assert store.ids_vistos("OTRO", range(10_000, 10_700)) == set()  # más de un tramo de consulta
+    c2 = store.iniciar_ciclo(AHORA + timedelta(days=1))
+    store.registrar_resultado(
+        c2, R.radicado, ok(act(2), act(1)), Veredicto(POSIBLE_NOVEDAD, nuevas=(act(2),)), "", AHORA
+    )
+    assert store.ids_vistos("OTRO", [1, 2, 3]) == {2}  # ya alertada: no se repite
+
+
+def test_la_tabla_de_conocimiento_se_rellena_una_sola_vez_al_migrar(tmp_path):
+    ruta = tmp_path / "bd.sqlite"
+    s = Store(ruta)
+    s.registrar_radicado(R)
+    c = s.iniciar_ciclo(AHORA)
+    s.registrar_resultado(c, R.radicado, ok(act(1), act(2)), Veredicto(SIN_CAMBIO), "", AHORA)
+    s.con.execute("DROP TABLE actuacion_radicado")
+    s.con.commit()
+    s.con.close()
+    s2 = Store(ruta)
+    assert s2.ids_conocidos(R.radicado) == {1, 2}
+    s2.con.close()
+    s3 = Store(ruta)
+    assert s3.ids_conocidos(R.radicado) == {1, 2}
+    assert s3.con.execute("SELECT COUNT(*) FROM actuacion_radicado").fetchone()[0] == 2
 
 
 def test_una_novedad_sin_alerta_igual_sale_en_el_reporte(store):
