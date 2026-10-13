@@ -111,6 +111,16 @@ def test_resumen_cuenta_consultas(store):
     assert store.resumen(c2) == {"total": 1, "exitosas": 1, "fallidas": 0, "novedades": 1}
 
 
+def test_la_actuacion_anterior_se_lee_aunque_la_actuacion_sea_compartida(store):
+    otro = Radicado("11001400307720210114702")
+    store.registrar_radicado(otro)
+    c = store.iniciar_ciclo(AHORA)
+    consulta = ok(act(1, fecha="2026-05-15", texto="Auto"))
+    store.registrar_resultado(c, R.radicado, consulta, Veredicto(SIN_CAMBIO), "", AHORA)
+    store.registrar_resultado(c, otro.radicado, consulta, Veredicto(SIN_CAMBIO), "", AHORA)
+    assert store.ultima_actuacion(otro.radicado) == "2026-05-15: Auto"
+
+
 def test_ultima_actuacion_devuelve_la_mas_reciente(store):
     c = store.iniciar_ciclo(AHORA)
     store.registrar_resultado(

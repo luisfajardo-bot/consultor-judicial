@@ -94,6 +94,6 @@ def test_primera_consulta_sin_fecha_de_corte_no_alerta():
     assert v.resultado == SIN_CAMBIO
 
 
-def test_primera_consulta_ignora_lo_ya_conocido_en_otro_radicado():
+def test_primera_consulta_ignora_lo_ya_alertado():
     v = comparar(ok(act(1, registro="2026-10-08")), {1}, False, desde="2026-10-07")
     assert v.resultado == SIN_CAMBIO

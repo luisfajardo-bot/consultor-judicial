@@ -222,8 +222,10 @@ class Store:
 
     def ultima_actuacion(self, radicado: str) -> str:
         f = self.con.execute(
-            "SELECT fecha_actuacion, actuacion FROM actuacion WHERE radicado = ? "
-            "ORDER BY fecha_actuacion DESC, id_reg_actuacion DESC LIMIT 1",
+            "SELECT t.fecha_actuacion, t.actuacion FROM actuacion t "
+            "JOIN actuacion_radicado l ON l.id_reg_actuacion = t.id_reg_actuacion "
+            "WHERE l.radicado = ? "
+            "ORDER BY t.fecha_actuacion DESC, t.id_reg_actuacion DESC LIMIT 1",
             (radicado,),
         ).fetchone()
         return f"{f['fecha_actuacion']}: {f['actuacion']}" if f else ""
