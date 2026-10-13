@@ -84,7 +84,7 @@ Doble clic en `scripts\abrir_panel.bat`. Se abre una ventana que muestra:
 - El botón **Abrir último reporte**, que abre el Excel más reciente.
 - El botón **Cancelar**, activo solo mientras hay una consulta en curso (también la programada). Pide confirmación y detiene la consulta al terminar el radicado actual. Lo ya consultado se conserva y se puede continuar más tarde: la siguiente consulta del mismo día sigue desde donde quedó, sin esperar el límite entre ejecuciones.
 
-- Un campo **días**: en un radicado que se consulta por primera vez, lo registrado en esos últimos días sale como POSIBLE NOVEDAD, y lo más antiguo queda como referencia. Por defecto 7; 0 no avisa nada. Se guarda al salir del campo o con Enter, rige desde la siguiente consulta y queda en `datosjustes.json`. Si ese archivo existe, manda sobre `[primera_consulta]` de `config.toml`.
+- Un campo **días**: en un radicado que se consulta por primera vez, lo registrado en esos últimos días sale como POSIBLE NOVEDAD, y lo más antiguo queda como referencia. Por defecto 7; 0 no avisa nada. Se guarda al salir del campo o con Enter, rige desde la siguiente consulta y queda en `datos\ajustes.json`. Si ese archivo existe, manda sobre `[primera_consulta]` de `config.toml`.
 
 Si ya hay otra consulta corriendo (por ejemplo la programada de las 9:00), el botón **Consultar ahora** queda desactivado y la barra muestra su avance. Cuando aparece "Sin avance hace N min", casi siempre es el portal pidiendo esperar: no hay que hacer nada, la consulta sigue sola. La ventana no envía datos a ningún sitio: solo lee los archivos de esta carpeta.
 

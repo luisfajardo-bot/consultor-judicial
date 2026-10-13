@@ -24,3 +24,9 @@ No se usa el modo WAL: no es seguro si la carpeta queda en una unidad de red.
 - `ultimo_cierre`, `ultimo_ciclo`, `contar_pendientes`: usadas por el límite entre ejecuciones y el [[panel y ventana]].
 
 Reglas R6 y R8 en [[Reglas de negocio]]. Usado por [[main]] y [[reporter]]. Respaldos en [[mantenimiento]].
+
+## Cambios tras la auditoría (2026-10-13)
+- Tabla nueva `actuacion_radicado(radicado, id_reg_actuacion)`: lo que cada radicado recibió en una consulta exitosa. Se llena una vez desde `actuacion` cuando la tabla se crea por primera vez.
+- `ids_vistos(radicado, ids)` devuelve lo que ese radicado ya conoce más los ids que ya tienen alerta (una actuación alerta una sola vez en todo el sistema, R6). Motivo: dos radicados pueden devolver el mismo proceso. Un "visto" global ocultaba una novedad real, y una clave por `actuacion` hacía que el segundo radicado alertara de más y desapareciera del reporte.
+- `filas_reporte` siempre da una fila por radicado consultado. Una novedad sin alerta muestra "novedad sin alerta registrada".
+- `ultimo_cierre` ignora los ciclos Interrumpido y Cancelado. `ultima_actuacion` lee a través de la tabla de enlace.

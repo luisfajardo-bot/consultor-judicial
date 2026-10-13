@@ -15,4 +15,8 @@
 ## Lista real
 La hoja `GENERAL` trae `RADICADO`, `ESTADO` y `DESPACHO`, pero no empresa. Hoy el reporte deja la empresa vacía. De 77 filas, 68 radicados son válidos (65 únicos) y 8 tienen un formato inválido, pendientes de depurar con la Gerencia.
 
+## Cambios tras la auditoría (2026-10-13)
+- `_radicados` extrae los radicados de una celda: primero el texto crudo y luego sin espacios, guiones ni puntos. Una racha de dígitos múltiplo de 23 se corta cada 23. Las rachas sobrantes de 18 dígitos o más se conservan tal cual para que salgan NO VERIFICADO. Una celda numérica (float) se marca "numérico: …".
+- `filas_sin_radicado` cuenta las filas con datos pero sin radicado. Con filtro de estado configurado, la columna de estado no cuenta como dato. [[main]] avisa de esas filas.
+
 **Depende de:** openpyxl. Reglas R7 y R9 en [[Reglas de negocio]]. Usado por [[main]].

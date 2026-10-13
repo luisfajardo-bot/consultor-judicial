@@ -13,4 +13,8 @@ Una actuación ya alertada o Descartada no vuelve a alertar (R6).
 
 **Lógica pura:** sin red ni disco, así que se prueba con casos escritos a mano.
 
+## Cambios tras la auditoría (2026-10-13)
+- En la primera consulta de un radicado, una actuación sin ninguna fecha cuenta como reciente.
+- Se excluyen los ids ya conocidos o ya alertados.
+
 **Depende de:** nada. Reglas en [[Reglas de negocio]]. Usado por [[main]].
