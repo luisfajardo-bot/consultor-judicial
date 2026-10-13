@@ -1,4 +1,4 @@
-import zipfile
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +14,7 @@ LEYENDA = (
     "Alerta automática. No constituye notificación procesal ni actuación confirmada; "
     "verificar en la fuente oficial."
 )
+MAX_BYTES_REPORTE = 20 * 1024 * 1024  # un reporte real pesa unos cientos de KB
 
 ENCABEZADOS = [
     "ID alerta",
@@ -104,7 +105,13 @@ def escribir_reporte(filas, resumen: dict, carpeta, ciclo_id: int, ahora: dateti
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
     ruta = carpeta / f"reporte_ciclo_{ciclo_id:04d}_{ahora:%Y-%m-%d}.xlsx"
-    wb.save(ruta)
+    tmp = ruta.with_name(ruta.name + ".tmp")  # no termina en .xlsx: nadie lo lee como reporte
+    try:
+        wb.save(tmp)
+        os.replace(tmp, ruta)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return ruta
 
 
@@ -117,6 +124,11 @@ def leer_decisiones(carpeta, avisar_fn=None) -> list[tuple[int, str, str]]:
     decisiones = []
     for ruta in sorted(Path(carpeta).glob("reporte_*.xlsx")):
         try:
+            if ruta.stat().st_size > MAX_BYTES_REPORTE:
+                if avisar_fn:
+                    avisar_fn(f"{ruta.name} es demasiado grande para ser un reporte; se salta.")
+                continue
+            de_este = []
             wb = load_workbook(ruta, read_only=True, data_only=True)
             try:
                 filas = wb["Alertas"].iter_rows(values_only=True)
@@ -133,10 +145,11 @@ def leer_decisiones(carpeta, avisar_fn=None) -> list[tuple[int, str, str]]:
                         if avisar_fn:
                             avisar_fn(f"ID de alerta inválido ({f[i_id]!r}) en {ruta.name}; fila ignorada.")
                         continue
-                    decisiones.append((alerta_id, f[i_dec], f[i_val] or ""))
+                    de_este.append((alerta_id, f[i_dec], f[i_val] or ""))
             finally:
                 wb.close()
-        except (OSError, ValueError, KeyError, StopIteration, zipfile.BadZipFile) as e:
+            decisiones.extend(de_este)  # solo si el archivo se leyó completo
+        except Exception as e:  # un archivo dañado no puede detener el monitoreo
             if avisar_fn:
                 avisar_fn(
                     f"No se pudo leer {ruta.name} ({type(e).__name__}); "

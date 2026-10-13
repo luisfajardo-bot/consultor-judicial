@@ -748,3 +748,16 @@ def test_radicado_agregado_despues_no_repite_una_alerta_ya_dada(tmp_path):
     ciclo3 = ciclo([R1, r2])
     assert ciclo3.novedades == 0
     assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1
+
+
+def test_las_decisiones_importadas_quedan_en_el_aviso(tmp_path):
+    avisos = []
+    store, reloj, f, r1, r2 = dos_ciclos(tmp_path)
+    wb = load_workbook(r2.reporte)
+    hoja = wb["Alertas"]
+    enc = [c.value for c in hoja[1]]
+    hoja.cell(row=2, column=enc.index("Decisión") + 1, value="Confirmada")
+    wb.save(r2.reporte)
+    reloj.avanzar()
+    correr(tmp_path, [R1], f, store, reloj, avisos)
+    assert any("1 decisión" in a and "reporte" in a.lower() for a in avisos)

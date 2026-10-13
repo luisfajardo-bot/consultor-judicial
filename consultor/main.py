@@ -48,8 +48,11 @@ def correr_ciclo(
             "revisar la fuente y los filtros de estado."
         )
         return Resumen(0, 0, 0, 0, 0, "Lista vacía", None)
+    aplicadas = 0
     for alerta_id, decision, usuario in leer_decisiones(carpeta_reportes, avisar_fn):
-        store.registrar_decision(alerta_id, decision, usuario or validador, ahora())
+        aplicadas += store.registrar_decision(alerta_id, decision, usuario or validador, ahora())
+    if aplicadas:
+        avisar_fn(f"Se registraron {aplicadas} decisión(es) tomadas en los reportes.")
 
     interrumpidos = store.cerrar_interrumpidos(ahora())
     if interrumpidos:
