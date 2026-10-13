@@ -161,3 +161,17 @@ def test_un_valor_invalido_no_se_guarda_y_se_vuelve_al_anterior(raiz, tmp_path, 
     assert leer_dias(tmp_path / "datos") == 5
     assert v.dias.get() == "5"
     assert "entre 0 y 365" in v.etiqueta_ajuste.cget("text")
+
+
+def test_si_refrescar_falla_la_ventana_lo_dice_y_sigue_sondeando(raiz, tmp_path, monkeypatch):
+    v = Ventana(raiz, _cfg(tmp_path, monkeypatch))
+    programados = []
+    monkeypatch.setattr(v.raiz, "after", lambda ms, fn: programados.append(ms))
+
+    def falla():
+        raise RuntimeError("base dañada")
+
+    monkeypatch.setattr(v, "refrescar", falla)
+    v.sondear()
+    assert "No se pudo actualizar" in v.etiqueta_estado.cget("text")
+    assert programados == [1000]  # sigue sondeando

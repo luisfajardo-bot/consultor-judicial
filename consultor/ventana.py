@@ -144,8 +144,14 @@ class Ventana:
             except queue.Empty:
                 break
             self._mostrar(e)
-        self.refrescar()
-        self.raiz.after(1000, self.sondear)
+        try:
+            self.refrescar()
+        except Exception as e:  # la pantalla debe seguir viva aunque la base o la carpeta fallen
+            self.etiqueta_estado.config(
+                text=f"No se pudo actualizar la pantalla ({type(e).__name__}). Avise a Sistemas.", fg=ROJO
+            )
+        finally:
+            self.raiz.after(1000, self.sondear)
 
     def _mostrar(self, e: Ejecucion):
         if e.codigo == 0:
