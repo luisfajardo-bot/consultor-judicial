@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .ajustes import DIAS_POR_DEFECTO, leer_dias
 from .bloqueo import Bloqueo, CicloEnCurso
 from .comparator import comparar
 from .consola import barra
@@ -281,7 +282,10 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                 parcial=bool(solo_radicado),
                 min_minutos=minimo,
                 cancelado=cancelado,
-                alertar_primera_dias=cfg.get("primera_consulta", {}).get("alertar_ultimos_dias", 7),
+                alertar_primera_dias=leer_dias(
+                    Path(cfg["salida"]["base_datos"]).parent,
+                    cfg.get("primera_consulta", {}).get("alertar_ultimos_dias", DIAS_POR_DEFECTO),
+                ),
             )
             _mantenimiento(cfg, store, aviso, datetime.now().date())
     except CicloEnCurso as e:

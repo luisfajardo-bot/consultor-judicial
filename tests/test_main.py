@@ -649,3 +649,40 @@ def test_primera_vez_alerta_lo_registrado_en_los_ultimos_dias_configurados(tmp_p
     enc, filas = hoja_alertas(r.reporte)
     assert filas[0][enc.index("Resultado")] == "POSIBLE NOVEDAD"
     assert filas[0][enc.index("Fecha actuación detectada")] == "2026-10-08"
+
+
+def _con_actuacion_de_hoy(monkeypatch):
+    from datetime import date
+
+    class Falso:
+        def __init__(self, **k):
+            pass
+
+        def consultar(self, r):
+            return ok(act(1, fecha=date.today().isoformat()))
+
+        def pausar(self):
+            pass
+
+    monkeypatch.setattr(main_mod, "Fetcher", Falso)
+
+
+def test_los_dias_de_la_pantalla_mandan_sobre_la_configuracion(tmp_path, monkeypatch):
+    from consultor.ajustes import guardar_dias
+
+    args = preparar(tmp_path, monkeypatch)
+    _con_actuacion_de_hoy(monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    guardar_dias(tmp_path / "datos", 0)  # sin ventana: todo es referencia
+    assert main_mod.ejecutar_ciclo(cfg).codigo == 0
+    store = Store(str(tmp_path / "datos" / "c.db"))
+    assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 0
+
+
+def test_sin_ajuste_de_la_pantalla_rige_el_de_la_configuracion_y_luego_el_7(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    _con_actuacion_de_hoy(monkeypatch)
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    assert main_mod.ejecutar_ciclo(cfg).codigo == 0  # por defecto 7 días: la de hoy alerta
+    store = Store(str(tmp_path / "datos" / "c.db"))
+    assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1

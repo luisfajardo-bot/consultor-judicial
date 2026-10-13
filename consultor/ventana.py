@@ -7,6 +7,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from .ajustes import DIAS_MAXIMO, DIAS_POR_DEFECTO, guardar_dias, leer_dias
 from .main import Ejecucion, cargar_config, ejecutar_ciclo
 from .panel import leer_avance, resumen_ultimo_ciclo, solicitar_cancelacion, texto_avance, texto_resumen, ultimo_reporte
 from .store import Store
@@ -62,6 +63,38 @@ class Ventana:
         self.boton_cancelar.pack(side="left")
         for b in (self.boton_consultar, self.boton_reporte, self.boton_cancelar):
             b.bind("<Return>", lambda e: e.widget.invoke())
+
+        ttk.Label(
+            marco,
+            text="Radicados que se consultan por primera vez: avisar lo registrado en los últimos",
+            wraplength=520,
+        ).pack(anchor="w", pady=(16, 0))
+        ajuste = ttk.Frame(marco)
+        ajuste.pack(anchor="w")
+        self.dias = tk.StringVar(value=str(leer_dias(self.carpeta_datos, self._dias_config())))
+        self.campo_dias = ttk.Spinbox(
+            ajuste, from_=0, to=DIAS_MAXIMO, width=4, textvariable=self.dias, command=self.guardar_dias
+        )
+        self.campo_dias.pack(side="left", padx=(0, 6))
+        ttk.Label(ajuste, text="días (0 = no avisar nada)").pack(side="left")
+        for evento in ("<Return>", "<FocusOut>"):
+            self.campo_dias.bind(evento, lambda e: self.guardar_dias())
+        self.etiqueta_ajuste = tk.Label(marco, text="", font=FUENTE, wraplength=520, justify="left", anchor="w")
+        self.etiqueta_ajuste.pack(anchor="w", fill="x")
+
+    def _dias_config(self):
+        return self.cfg.get("primera_consulta", {}).get("alertar_ultimos_dias", DIAS_POR_DEFECTO)
+
+    def guardar_dias(self):
+        try:
+            dias = guardar_dias(self.carpeta_datos, self.dias.get())
+        except ValueError as e:
+            self.dias.set(str(leer_dias(self.carpeta_datos, self._dias_config())))
+            self.etiqueta_ajuste.config(text=str(e), fg=ROJO)
+            return
+        self.dias.set(str(dias))
+        texto = "Guardado: no se avisará nada de las consultas por primera vez." if dias == 0 else f"Guardado: {dias} días. Rige desde la próxima consulta."
+        self.etiqueta_ajuste.config(text=texto, fg=VERDE)
 
     def refrescar(self):
         avance = leer_avance(self.carpeta_datos)
