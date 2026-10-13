@@ -172,7 +172,7 @@ def _dañar_xml(ruta):
 def test_un_reporte_con_xml_dañado_se_avisa_y_no_tumba_la_lectura(tmp_path):
     _libro(tmp_path / "reporte_a.xlsx", [[1, "Confirmada", "Ana"]])
     malo = tmp_path / "reporte_b.xlsx"
-    _libro(malo, [[2, "Descartada", "Ana"]])
+    _libro(malo, [[i, "Confirmada", "Ana"] for i in range(100, 300)])
     _dañar_xml(malo)
     avisos = []
     assert leer_decisiones(tmp_path, avisos.append) == [(1, "Confirmada", "Ana")]
@@ -189,10 +189,12 @@ def test_un_reporte_demasiado_grande_se_salta_con_aviso(tmp_path, monkeypatch):
 
 def test_si_falla_el_guardado_no_queda_un_reporte_a_medias(tmp_path, monkeypatch):
     def falla(self, ruta):
-        open(ruta, "wb").write(b"PK parcial")
+        with open(ruta, "wb") as f:
+            f.write(b"PK parcial")
         raise OSError("disco lleno")
 
     monkeypatch.setattr(Workbook, "save", falla)
     with pytest.raises(OSError):
         escribir(tmp_path, [fila()])
     assert list(tmp_path.glob("reporte_*.xlsx")) == []
+    assert list(tmp_path.iterdir()) == []

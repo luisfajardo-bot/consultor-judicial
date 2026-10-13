@@ -761,3 +761,7 @@ def test_las_decisiones_importadas_quedan_en_el_aviso(tmp_path):
     reloj.avanzar()
     correr(tmp_path, [R1], f, store, reloj, avisos)
     assert any("1 decisión" in a and "reporte" in a.lower() for a in avisos)
+    reloj.avanzar()
+    avisos2 = []
+    correr(tmp_path, [R1], f, store, reloj, avisos2)
+    assert not any("decisión(es)" in a for a in avisos2)
