@@ -5,8 +5,21 @@ from openpyxl import load_workbook
 from .models import Radicado
 
 
-def _radicado(valor) -> str:
-    return re.sub(r"[\s\-\.]", "", str(valor)) if valor is not None else ""
+def _radicados(valor) -> list[str]:
+    """Radicados de una celda. El cuadro trae texto junto al número ("SEGUNDAINSTANCIA...")
+    y a veces dos radicados pegados: se toma cada tramo de dígitos y se corta de a 23.
+    Si no hay ninguno completo se devuelve el texto limpio, para que se vea como NO VERIFICADO.
+    """
+    if valor is None:
+        return []
+    limpio = re.sub(r"[\s\-\.]", "", str(valor))
+    encontrados = [
+        tramo[i : i + 23]
+        for tramo in re.findall(r"\d+", limpio)
+        if len(tramo) >= 23 and len(tramo) % 23 == 0
+        for i in range(0, len(tramo), 23)
+    ]
+    return encontrados or ([limpio] if limpio else [])
 
 
 def _texto(valor) -> str:
@@ -63,19 +76,20 @@ class FuenteExcel:
 
             por_radicado: dict[str, Radicado] = {}
             for fila in filas:
-                rad = _radicado(fila[i_rad]) if i_rad < len(fila) else ""
-                if not rad:
+                rads = _radicados(fila[i_rad]) if i_rad < len(fila) else []
+                if not rads:
                     continue
                 # "ACTIVO" admite variantes del Excel como "ACTIVO -COBRO COSTAS"
                 if self.estados and not celda(fila, i_est).lower().startswith(self.estados):
                     continue
-                nuevo = Radicado(rad, celda(fila, i_emp), celda(fila, i_des), celda(fila, i_cal))
-                previo = por_radicado.get(rad)
-                if previo is None:
-                    por_radicado[rad] = nuevo
-                elif nuevo.empresa and nuevo.empresa not in previo.empresa.split(" / "):
-                    empresas = " / ".join(e for e in (previo.empresa, nuevo.empresa) if e)
-                    por_radicado[rad] = Radicado(rad, empresas, previo.despacho, previo.calidad)
+                for rad in rads:
+                    nuevo = Radicado(rad, celda(fila, i_emp), celda(fila, i_des), celda(fila, i_cal))
+                    previo = por_radicado.get(rad)
+                    if previo is None:
+                        por_radicado[rad] = nuevo
+                    elif nuevo.empresa and nuevo.empresa not in previo.empresa.split(" / "):
+                        empresas = " / ".join(e for e in (previo.empresa, nuevo.empresa) if e)
+                        por_radicado[rad] = Radicado(rad, empresas, previo.despacho, previo.calidad)
             return list(por_radicado.values())
         finally:
             wb.close()

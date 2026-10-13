@@ -110,3 +110,61 @@ def test_crear_fuente_excel_y_tipo_desconocido(tmp_path):
     assert isinstance(crear_fuente(cfg), FuenteExcel)
     with pytest.raises(ValueError, match="sql"):
         crear_fuente({"tipo": "sql"})
+
+
+@pytest.mark.parametrize(
+    "celda, esperados",
+    [
+        # dos radicados pegados sin separador (46 dígitos)
+        (
+            "0500131050232019005610005001310502320190056101",
+            ["05001310502320190056100", "05001310502320190056101"],
+        ),
+        (
+            "68081333300120210014100/TRIBUNAL68081333300120210014102",
+            ["68081333300120210014100", "68081333300120210014102"],
+        ),
+        (
+            "73001333300720220024300tribunal73001333300720220024301",
+            ["73001333300720220024300", "73001333300720220024301"],
+        ),
+        (
+            "68081333300220210021700SEGUNDAINSTANCIA68081333300220210021702",
+            ["68081333300220210021700", "68081333300220210021702"],
+        ),
+        # un radicado con texto alrededor
+        ("05266310500220230011400SEGUNDAINSTANCIAc", ["05266310500220230011400"]),
+        ("otrojuzgado11001310303720250036100", ["11001310303720250036100"]),
+        (
+            "JUZGADO1CIVILDELCIRCUITODEITAGUI05360310300120260013800",
+            ["05360310300120260013800"],
+        ),
+        # con separadores y texto
+        ("Juzgado 1 Civil: 11001-40-03-077-2021-01147-00 (ver)", ["11001400307720210114700"]),
+    ],
+)
+def test_saca_los_radicados_de_celdas_con_texto_o_pegados(tmp_path, celda, esperados):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[celda, "ICEIN", "", "", "Activo"]])
+    assert [r.radicado for r in fuente(ruta).cargar()] == esperados
+
+
+def test_dos_radicados_en_una_celda_comparten_los_datos_de_la_fila(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(
+        ruta,
+        [
+            ["11001400307720210114700", "OTRA", "", "", "Activo"],
+            ["11001400307720210114700/TRIBUNAL11001400307720210114702", "ICEIN", "Juz", "Demandado", "Activo"],
+        ],
+    )
+    por = {r.radicado: r for r in fuente(ruta).cargar()}
+    assert list(por) == ["11001400307720210114700", "11001400307720210114702"]
+    assert por["11001400307720210114700"].empresa == "OTRA / ICEIN"
+    assert por["11001400307720210114702"].empresa == "ICEIN"
+
+
+def test_sin_23_digitos_en_ninguna_parte_se_conserva_el_texto_limpio(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [["sin radicado 12-34", "ICEIN", "", "", "Activo"]])
+    assert [r.radicado for r in fuente(ruta).cargar()] == ["sinradicado1234"]
