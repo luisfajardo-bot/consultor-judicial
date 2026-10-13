@@ -182,6 +182,24 @@ class Store:
         )
         return {f["id_reg_actuacion"] for f in filas}
 
+    def ids_vistos(self, ids) -> set[int]:
+        """Cuáles de estos ids ya están guardados, bajo cualquier radicado.
+
+        El id de una actuación es único en todo el portal: si dos radicados devuelven el mismo
+        proceso, lo que ya se vio bajo uno no es nuevo para el otro. Las marcas "?" son lo único
+        que se arma con texto; los valores van como parámetros.
+        """
+        ids = list(ids)
+        vistos: set[int] = set()
+        for i in range(0, len(ids), 500):  # SQLite limita las variables por consulta
+            tramo = ids[i : i + 500]
+            marcas = ",".join("?" * len(tramo))
+            filas = self.con.execute(
+                f"SELECT id_reg_actuacion FROM actuacion WHERE id_reg_actuacion IN ({marcas})", tramo
+            )
+            vistos.update(f["id_reg_actuacion"] for f in filas)
+        return vistos
+
     def tiene_referencia(self, radicado: str) -> bool:
         return (
             self.con.execute(
@@ -317,8 +335,8 @@ class Store:
                 "validada_por": "",
                 "validada_en": "",
             }
-            if c["resultado"] == POSIBLE_NOVEDAD:
-                for a in alertas.get(c["radicado"], []):
+            if c["resultado"] == POSIBLE_NOVEDAD and alertas.get(c["radicado"]):
+                for a in alertas[c["radicado"]]:
                     filas.append(
                         {
                             **base,
@@ -332,6 +350,9 @@ class Store:
                             "validada_en": a["validada_en"] or "",
                         }
                     )
+            elif c["resultado"] == POSIBLE_NOVEDAD:
+                # red de seguridad: un radicado consultado nunca puede faltar en el reporte
+                filas.append({**base, "motivo": "novedad sin alerta registrada: verificar en el portal"})
             else:
                 filas.append(base)
         for a in self.con.execute(PENDIENTES_SQL, (ciclo_id,)):

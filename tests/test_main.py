@@ -686,3 +686,30 @@ def test_sin_ajuste_de_la_pantalla_rige_el_de_la_configuracion_y_luego_el_7(tmp_
     assert main_mod.ejecutar_ciclo(cfg).codigo == 0  # por defecto 7 días: la de hoy alerta
     store = Store(str(tmp_path / "datos" / "c.db"))
     assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1
+
+
+def _radicados_en(reporte):
+    wb = load_workbook(reporte)
+    salida = set()
+    for hoja in ("Alertas", "Sin cambio"):
+        filas = list(wb[hoja].iter_rows(values_only=True))
+        i = filas[0].index("Radicado")
+        salida |= {f[i] for f in filas[1:]}
+    return salida
+
+
+def test_dos_radicados_con_el_mismo_proceso_no_dan_alertas_falsas_ni_desaparecen(tmp_path):
+    r2 = Radicado("11001400307720210114702")
+    store, reloj = Store(":memory:"), Reloj()
+    f = FetcherFalso({R1.radicado: ok(act(1), act(2)), r2.radicado: ok(act(1), act(2))})
+    correr(tmp_path, [R1, r2], f, store, reloj)
+    reloj.avanzar()
+    ciclo2 = correr(tmp_path, [R1, r2], f, store, reloj)
+    assert ciclo2.novedades == 0  # nada nuevo: ninguno de los dos alerta
+
+    reloj.avanzar()
+    nueva = ok(act(3), act(2), act(1))
+    f.respuestas = {R1.radicado: nueva, r2.radicado: nueva}
+    ciclo3 = correr(tmp_path, [R1, r2], f, store, reloj)
+    assert store.con.execute("SELECT COUNT(*) FROM alerta").fetchone()[0] == 1  # una sola alerta
+    assert _radicados_en(ciclo3.reporte) == {R1.radicado, r2.radicado}  # ninguno desaparece

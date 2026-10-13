@@ -311,3 +311,21 @@ def test_ultimo_cierre_ignora_los_ciclos_cancelados(store):
     a = store.iniciar_ciclo(AHORA)
     store.cerrar_ciclo(a, "Cancelado por el usuario", AHORA + timedelta(minutes=2))
     assert store.ultimo_cierre() is None
+
+
+def test_una_actuacion_vista_bajo_otro_radicado_no_es_nueva(store):
+    c = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(c, R.radicado, ok(act(1), act(2)), Veredicto(SIN_CAMBIO), "", AHORA)
+    assert store.ids_vistos([1, 2, 3]) == {1, 2}
+    assert store.ids_vistos([]) == set()
+    assert store.ids_vistos(range(10_000, 10_700)) == set()  # más de un tramo de consulta
+
+
+def test_una_novedad_sin_alerta_igual_sale_en_el_reporte(store):
+    c = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(
+        c, R.radicado, ok(act(1)), Veredicto(POSIBLE_NOVEDAD, nuevas=()), "", AHORA
+    )
+    filas = store.filas_reporte(c)
+    assert [f["radicado"] for f in filas] == [R.radicado]
+    assert "sin alerta" in filas[0]["motivo"]
