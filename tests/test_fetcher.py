@@ -433,3 +433,31 @@ def test_digitos_unicode_no_son_un_radicado_valido():
     f, _, _ = crear(rutas_ok())
     c = f.consultar(Radicado("١" * 23))  # dígitos arábigos
     assert c.estado == FALLIDA
+
+
+def test_pagina_siguiente_404_con_faltantes_es_error_visible():
+    rutas = rutas_ok()
+    sin = RespuestaFalsa(
+        404, {"StatusCode": 404, "Message": "No se encontraron Actuaciones para el Proceso: 1"}
+    )
+    rutas["Actuaciones"] = [_pagina([3, 2], cant=3), sin]
+    f, _, _ = crear(rutas)
+    assert f.consultar(RAD).estado == ERROR
+
+
+def test_pagina_siguiente_vacia_con_faltantes_es_error_visible():
+    rutas = rutas_ok()
+    rutas["Actuaciones"] = [_pagina([3, 2], cant=3), RespuestaFalsa(200, {"actuaciones": []})]
+    f, _, _ = crear(rutas)
+    assert f.consultar(RAD).estado == ERROR
+
+
+@pytest.mark.parametrize("texto", ["20261008", "2026-W41-4"])
+def test_una_fecha_iso_laxa_es_error_visible(texto):
+    f, _, _ = crear(_con_actuaciones([_a(fechaActuacion=texto)]))
+    assert f.consultar(RAD).estado == ERROR
+
+
+def test_radicado_con_salto_de_linea_final_no_es_valido():
+    f, _, _ = crear(rutas_ok())
+    assert f.consultar(Radicado("1" * 23 + "\n")).estado == FALLIDA

@@ -9,7 +9,7 @@ from .models import ERROR, EXITOSA, FALLIDA, Actuacion, Consulta, Radicado
 BASE = "https://consultaprocesos.ramajudicial.gov.co:448/api/v2"
 USER_AGENT = "ConsultorJudicial/1.0 (Gerencia Juridica; consulta de procesos propios)"
 MAX_PAGINAS = 20
-RADICADO_RE = re.compile(r"^[0-9]{23}$")
+RADICADO_RE = re.compile(r"[0-9]{23}")
 
 
 class ErrorPortal(Exception):
@@ -42,7 +42,8 @@ def _fecha_iso(valor) -> str:
     """Como _fecha, pero si hay texto exige AAAA-MM-DD: otro formato es un cambio de la API."""
     texto = _fecha(valor)
     if texto:
-        date.fromisoformat(texto)  # ValueError si cambió el formato
+        if date.fromisoformat(texto).isoformat() != texto:  # ValueError si cambió el formato
+            raise ValueError(f"fecha que no es AAAA-MM-DD: {texto!r}")
     return texto
 
 
@@ -156,6 +157,7 @@ class Fetcher:
     def _actuaciones(self, id_proceso, radicado) -> list[Actuacion]:
         acumuladas: list[Actuacion] = []
         pagina = 1
+        total = 0
         while True:
             estado, datos = self._get(
                 f"{BASE}/Proceso/Actuaciones/{id_proceso}", {"pagina": pagina}
@@ -165,18 +167,24 @@ class Fetcher:
                     raise ErrorPortal("404 inesperado al pedir actuaciones")
                 break
             lista = datos["actuaciones"]
+            if not lista:
+                break
             acumuladas.extend(_actuacion(a, radicado) for a in lista)
             cants = [a.get("cant") for a in lista]
             if any(not isinstance(c, int) or isinstance(c, bool) for c in cants):
                 raise TypeError("actuaciones sin 'cant' entero")  # sin total no se sabe si falta algo
             total = max(cants, default=0)
             if len(acumuladas) > total:
-                raise TypeError(f"cant ({total}) menor que las actuaciones recibidas ({len(acumuladas)})")
-            if not lista or len(acumuladas) >= total:
+                raise TypeError(
+                    f"cant ({total}) menor que las actuaciones recibidas ({len(acumuladas)})"
+                )
+            if len(acumuladas) >= total:
                 break
             pagina += 1
             if pagina > MAX_PAGINAS:
                 raise ErrorPortal(f"más de {MAX_PAGINAS} páginas de actuaciones")
+        if len(acumuladas) < total:
+            raise TypeError(f"faltan actuaciones: cant {total}, recibidas {len(acumuladas)}")
         return acumuladas
 
     def _ultima_actualizacion(self, id_proceso) -> str:
@@ -191,7 +199,7 @@ class Fetcher:
         return datos.get("ultimaActualizacion") or ""
 
     def consultar(self, r: Radicado) -> Consulta:
-        if not RADICADO_RE.match(r.radicado):
+        if not RADICADO_RE.fullmatch(r.radicado):
             return Consulta(FALLIDA, motivo="radicado inválido: debe tener 23 dígitos")
         try:
             estado, datos = self._get(
