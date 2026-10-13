@@ -168,3 +168,48 @@ def test_sin_23_digitos_en_ninguna_parte_se_conserva_el_texto_limpio(tmp_path):
     ruta = tmp_path / "x.xlsx"
     hacer_excel(ruta, [["sin radicado 12-34", "ICEIN", "", "", "Activo"]])
     assert [r.radicado for r in fuente(ruta).cargar()] == ["sinradicado1234"]
+
+
+@pytest.mark.parametrize(
+    "celda",
+    [
+        "11001400307720210114700-2026",
+        "11001400307720210114700.1",
+        "11001400307720210114700 - 2",
+        "11001400307720210114700 2026-01-15",
+    ],
+)
+def test_un_radicado_pegado_a_otros_numeros_con_separador_se_conserva(tmp_path, celda):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[celda, "ICEIN", "", "", "Activo"]])
+    assert [r.radicado for r in fuente(ruta).cargar()] == ["11001400307720210114700"]
+
+
+def test_una_celda_numerica_se_marca_como_tal_y_no_como_un_numero_recortado(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[1.10014003077202e22, "ICEIN", "", "", "Activo"]])
+    (r,) = fuente(ruta).cargar()
+    assert r.radicado.startswith("numérico:")
+
+
+def test_cuenta_las_filas_con_datos_pero_sin_radicado(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(
+        ruta,
+        [
+            [None, "ICEIN", "Juzgado 7", "", "Activo"],  # datos sin radicado
+            [None, None, None, None, None],  # fila vacía: no cuenta
+            ["11001400307720210114700", "ICEIN", "", "", "Activo"],
+        ],
+    )
+    f = fuente(ruta)
+    assert len(f.cargar()) == 1
+    assert f.filas_sin_radicado == 1
+
+
+def test_una_fila_sin_radicado_y_con_otro_estado_no_cuenta(tmp_path):
+    ruta = tmp_path / "x.xlsx"
+    hacer_excel(ruta, [[None, "ICEIN", "", "", "Cerrado"]])
+    f = fuente(ruta, estados_incluidos=["activo"])
+    f.cargar()
+    assert f.filas_sin_radicado == 0

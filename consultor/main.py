@@ -254,7 +254,14 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                     )
                     aviso(msg)
                     return Ejecucion(3, msg, None)
-            radicados = crear_fuente(cfg["fuente"]).cargar()
+            fuente = crear_fuente(cfg["fuente"])
+            radicados = fuente.cargar()
+            sin_radicado = getattr(fuente, "filas_sin_radicado", 0)
+            if sin_radicado:
+                aviso(
+                    f"{sin_radicado} fila(s) del Excel tienen datos pero van sin radicado "
+                    "y no se consultan: revisar el cuadro."
+                )
             if solo_radicado:
                 radicados = [r for r in radicados if r.radicado == solo_radicado]
             portal = cfg["portal"]

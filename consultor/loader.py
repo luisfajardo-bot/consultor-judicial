@@ -8,18 +8,27 @@ from .models import Radicado
 def _radicados(valor) -> list[str]:
     """Radicados de una celda. El cuadro trae texto junto al número ("SEGUNDAINSTANCIA...")
     y a veces dos radicados pegados: se toma cada tramo de dígitos y se corta de a 23.
+
+    Primero se busca en el texto tal cual, para que "…700-2026" no pegue el año al radicado;
+    si no hay ninguno, se vuelve a buscar sin espacios, guiones ni puntos ("11001-40-03-…").
     Si no hay ninguno completo se devuelve el texto limpio, para que se vea como NO VERIFICADO.
     """
     if valor is None:
         return []
-    limpio = re.sub(r"[\s\-\.]", "", str(valor))
-    encontrados = [
-        tramo[i : i + 23]
-        for tramo in re.findall(r"\d+", limpio)
-        if len(tramo) >= 23 and len(tramo) % 23 == 0
-        for i in range(0, len(tramo), 23)
-    ]
-    return encontrados or ([limpio] if limpio else [])
+    if isinstance(valor, float):  # Excel guarda solo 15 cifras: el número ya está recortado
+        return [f"numérico: {valor!r}"]
+    texto = str(valor)
+    limpio = re.sub(r"[\s\-\.]", "", texto)
+    for fuente in (texto, limpio):
+        encontrados = [
+            tramo[i : i + 23]
+            for tramo in re.findall(r"[0-9]+", fuente)
+            if len(tramo) >= 23 and len(tramo) % 23 == 0
+            for i in range(0, len(tramo), 23)
+        ]
+        if encontrados:
+            return encontrados
+    return [limpio] if limpio else []
 
 
 def _texto(valor) -> str:
@@ -59,8 +68,10 @@ class FuenteExcel:
         self.col_calidad = col_calidad
         self.col_estado = col_estado
         self.estados = tuple(e.strip().lower() for e in estados_incluidos if e.strip())
+        self.filas_sin_radicado = 0
 
     def cargar(self) -> list[Radicado]:
+        self.filas_sin_radicado = 0
         wb = load_workbook(self.ruta, read_only=True, data_only=True)
         try:
             filas = wb[self.hoja].iter_rows(values_only=True)
@@ -76,11 +87,13 @@ class FuenteExcel:
 
             por_radicado: dict[str, Radicado] = {}
             for fila in filas:
-                rads = _radicados(fila[i_rad]) if i_rad < len(fila) else []
-                if not rads:
-                    continue
                 # "ACTIVO" admite variantes del Excel como "ACTIVO -COBRO COSTAS"
                 if self.estados and not celda(fila, i_est).lower().startswith(self.estados):
+                    continue
+                rads = _radicados(fila[i_rad]) if i_rad < len(fila) else []
+                if not rads:
+                    if any(_texto(c) for c in fila):
+                        self.filas_sin_radicado += 1  # datos sin radicado: se avisa, no se pierde en silencio
                     continue
                 for rad in rads:
                     nuevo = Radicado(rad, celda(fila, i_emp), celda(fila, i_des), celda(fila, i_cal))

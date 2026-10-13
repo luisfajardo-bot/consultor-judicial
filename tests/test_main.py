@@ -765,3 +765,15 @@ def test_las_decisiones_importadas_quedan_en_el_aviso(tmp_path):
     avisos2 = []
     correr(tmp_path, [R1], f, store, reloj, avisos2)
     assert not any("decisión(es)" in a for a in avisos2)
+
+
+def test_las_filas_sin_radicado_se_avisan(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+    wb = load_workbook(tmp_path / "x.xlsx")
+    wb["GENERAL"].append([None])  # fila sin radicado pero ...
+    wb["GENERAL"].cell(row=3, column=2, value="dato suelto")  # ... con datos en otra columna
+    wb.save(tmp_path / "x.xlsx")
+    avisos = []
+    cfg = main_mod.cargar_config(args[args.index("--config") + 1])
+    assert main_mod.ejecutar_ciclo(cfg, avisar_fn=avisos.append).codigo == 0
+    assert any("sin radicado" in a for a in avisos)
