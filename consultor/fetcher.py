@@ -113,6 +113,9 @@ class Fetcher:
     def pausar(self) -> None:
         self._dormir(self.pausa)
 
+    def esperar(self, segundos) -> None:
+        self._dormir(segundos)
+
     def _pedir(self, url, params):
         """Un GET; espera pausa_peticiones antes de todos salvo el primero."""
         if self._hubo_peticion and self.pausa_peticiones > 0:

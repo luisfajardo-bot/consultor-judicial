@@ -196,6 +196,16 @@ class Store:
             is not None
         )
 
+    def descartar_fallidas(self, ciclo_id: int) -> None:
+        """Borra lo no exitoso del ciclo para que se vuelva a consultar.
+
+        ponytail: primer_intento se corre a la hora del reintento; solo importa si cruza la medianoche.
+        """
+        with self.con:
+            self.con.execute(
+                "DELETE FROM consulta WHERE ciclo_id = ? AND estado != ?", (ciclo_id, EXITOSA)
+            )
+
     def ids_conocidos(self, radicado: str) -> set[int]:
         filas = self.con.execute(
             "SELECT id_reg_actuacion FROM actuacion_radicado WHERE radicado = ?", (radicado,)
