@@ -12,12 +12,12 @@ Esa separación es la **arquitectura para escalar**: otra vista (por ejemplo una
 - Barra de progreso con "12 de 44" y la hora de inicio.
 - "Sin avance hace N min: el portal puede estar pidiendo esperar", si pasan más de 90 s sin avance. Casi siempre es la espera por el bloqueo del portal y no hay que hacer nada.
 - Resumen de la última consulta: consultados, exitosos, sin verificar, posibles novedades y alertas por validar.
-- Botón **Consultar ahora**: corre `ejecutar_ciclo` en un hilo aparte. Se desactiva mientras corre otro ciclo, sea de la ventana o de la tarea programada.
+- Botón **Consultar ahora**: corre `ejecutar_ciclo` en un hilo aparte. Se desactiva mientras corre otro ciclo, sea de la ventana o de otro equipo.
 - Botón **Abrir último reporte**.
 
 ## Estado confiable y cancelación
 - El avance solo se muestra si el candado está realmente tomado ([[bloqueo]]). Un archivo viejo no hace creer que hay una consulta corriendo ni desactiva **Consultar ahora**.
-- **Cancelar consulta** se habilita solo mientras corre un ciclo, pide confirmación y crea `cancelar.txt`. Funciona con cualquier ciclo, también el programado. Lo ya consultado se conserva.
+- **Cancelar consulta** se habilita solo mientras corre un ciclo, pide confirmación y crea `cancelar.txt`. Funciona con cualquier ciclo. Lo ya consultado se conserva.
 
 ## Cuidados
 - No envía datos a ningún servicio externo.

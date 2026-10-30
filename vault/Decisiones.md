@@ -12,7 +12,7 @@
 | Segunda llamada | Siempre se hace | Si no, una actuación nueva con la misma fecha que la anterior pasaría sin detectarse |
 | Detección | Por `idRegActuacion` | Más robusto que comparar fecha y texto |
 | Datos personales | `sujetosProcesales` se descarta en [[fetcher]] | Límite de Nivel 2 de la spec |
-| Dónde corre | Equipo corporativo local con tarea programada, lunes, miércoles y viernes a las 9:00 | La máquina virtual no es un requisito técnico. Se aplaza a la fase de escalamiento |
+| Dónde corre | Equipo corporativo local. Sin tarea programada: cada consulta la lanza una persona (2026-10-30, para no generar más tráfico al portal) | La máquina virtual no es un requisito técnico. Se aplaza a la fase de escalamiento |
 | Dos ciclos a la vez | Imposible, con candado del sistema operativo ([[bloqueo]]) | Una persona no técnica no tiene por qué saber que no debe hacerlo |
 | Repetir consultas | Mínimo 30 minutos entre ciclos completos, `--forzar` lo salta | Cuida la cuota del portal |
 | Portal bloquea | Esperar y reintentar, y si persiste, pausar y continuar en la siguiente ejecución | La cuota es de 60 a 70 peticiones y se libera en unos 2 minutos ([[Operación y límites del portal]]) |

@@ -11,6 +11,6 @@ Quien intenta un segundo ciclo recibe `CicloEnCurso` con el avance del primero y
 `ciclo_en_curso(carpeta)` sondea el candado: si está libre, el `estado.txt` que haya es un resto viejo (por ejemplo tras cerrar la ventana de la consola) y se borra. Un ciclo que arranca tolera un choque breve con un sondeo: reintenta unos 0,3 s antes de rendirse.
 
 ## El avance
-`estado.txt`, con el formato `HH:MM | N de M`, se reescribe de forma atómica en cada radicado y se borra al terminar. Es la **fuente única del avance**: lo leen el segundo intento de ejecución y el [[panel y ventana]], así que la ventana muestra también el avance de la tarea programada.
+`estado.txt`, con el formato `HH:MM | N de M`, se reescribe de forma atómica en cada radicado y se borra al terminar. Es la **fuente única del avance**: lo leen el segundo intento de ejecución y el [[panel y ventana]], así que la ventana muestra también el avance de una consulta lanzada desde otro equipo.
 
 Usado por [[main]]. Medido en [[Operación y límites del portal]].

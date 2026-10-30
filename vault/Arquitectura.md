@@ -1,6 +1,6 @@
 # Arquitectura
 
-Pipeline lineal. Cada módulo tiene una responsabilidad y se prueba solo. Estado: 257 pruebas, probado en Windows (Python 3.14) y en Linux (Python 3.12).
+Pipeline lineal. Cada módulo tiene una responsabilidad y se prueba solo. Estado: 263 pruebas, probado en Windows (Python 3.14) y en Linux (Python 3.12).
 
 ```mermaid
 flowchart LR
@@ -33,7 +33,7 @@ flowchart LR
 5. [[fetcher]] consulta cada uno, sin repetir los ya consultados en este ciclo (así se reanuda).
 6. [[comparator]] clasifica: POSIBLE NOVEDAD, SIN CAMBIO o NO VERIFICADO.
 7. [[store]] guarda actuaciones, consulta y alertas en una sola transacción.
-8. Si el portal bloquea, el ciclo se pausa y continúa en la siguiente ejecución. Si fallan demasiadas consultas, se detiene (R5).
+8. Si el portal bloquea, el ciclo se pausa y continúa en la siguiente ejecución. Si fallan demasiadas consultas, espera 10 min y reintenta lo fallido (hasta 2 veces); si sigue igual, se detiene (R5).
 9. [[reporter]] escribe el reporte **antes** de cerrar el ciclo.
 10. [[mantenimiento]] archiva reportes viejos y respalda la base.
 
@@ -51,7 +51,7 @@ flowchart LR
 
 - Consola: `python -m consultor run`.
 - Ventana (solo Windows): `python -m consultor ventana`, o `scripts\abrir_panel.bat`.
-- Tarea programada de Windows `ConsultorJudicial`: lunes, miércoles y viernes a las 9:00, con `scripts\ejecutar_ciclo.bat`.
+- Sin tarea programada: las consultas se lanzan a mano con la ventana o `scripts\ejecutar_ahora.bat`.
 - Docker: no hay Dockerfile todavía. Funciona en Linux desde la línea de comandos, sin ventana. Ver [[Fase de escalamiento]].
 
 Ver [[Decisiones]] para el porqué de cada elección y [[Operación y límites del portal]] para lo medido contra el portal real.

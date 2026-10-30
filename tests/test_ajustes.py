@@ -1,6 +1,6 @@
 import pytest
 
-from consultor.ajustes import DIAS_POR_DEFECTO, guardar_dias, leer_dias
+from consultor.ajustes import DIAS_POR_DEFECTO, consultas_activas, guardar_activas, guardar_dias, leer_dias
 
 
 def test_sin_archivo_se_usa_el_valor_por_defecto(tmp_path):
@@ -33,3 +33,25 @@ def test_un_archivo_dañado_no_rompe_la_lectura(tmp_path):
     assert leer_dias(tmp_path) == DIAS_POR_DEFECTO
     (tmp_path / "ajustes.json").write_text('{"alertar_ultimos_dias": 9999}', encoding="utf-8")
     assert leer_dias(tmp_path) == DIAS_POR_DEFECTO
+
+
+def test_las_consultas_estan_encendidas_por_defecto_y_el_interruptor_se_guarda(tmp_path):
+    assert consultas_activas(tmp_path)
+    assert guardar_activas(tmp_path, False) is False
+    assert not consultas_activas(tmp_path)
+    guardar_activas(tmp_path, True)
+    assert consultas_activas(tmp_path)
+
+
+def test_interruptor_y_dias_no_se_pisan_entre_si(tmp_path):
+    guardar_dias(tmp_path, 4)
+    guardar_activas(tmp_path, False)
+    guardar_dias(tmp_path, 9)
+    assert leer_dias(tmp_path) == 9 and not consultas_activas(tmp_path)
+
+
+def test_un_interruptor_dañado_deja_las_consultas_encendidas(tmp_path):
+    (tmp_path / "ajustes.json").write_text("{no es json", encoding="utf-8")
+    assert consultas_activas(tmp_path)
+    (tmp_path / "ajustes.json").write_text('{"consultas_activas": "no"}', encoding="utf-8")
+    assert consultas_activas(tmp_path)

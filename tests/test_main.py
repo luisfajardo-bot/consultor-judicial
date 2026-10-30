@@ -19,6 +19,7 @@ class FetcherFalso:
     def __init__(self, respuestas):
         self.respuestas = respuestas
         self.llamadas = []
+        self.esperas = []
 
     def consultar(self, r):
         self.llamadas.append(r.radicado)
@@ -29,6 +30,9 @@ class FetcherFalso:
 
     def pausar(self):
         pass
+
+    def esperar(self, segundos):
+        self.esperas.append(segundos)
 
 
 def correr(tmp_path, radicados, fetcher, store, reloj, avisos=None, max_fallas=0.5, progreso=None):
@@ -95,11 +99,30 @@ def test_r5_detiene_y_marca_el_resto_como_no_verificado(tmp_path):
     store, avisos = Store(":memory:"), []
     res = correr(tmp_path, radicados, f, store, Reloj(), avisos)
     assert res.estado.startswith("Detenido")
-    assert len(f.llamadas) == 10
+    assert len(f.llamadas) == 10 * (1 + main_mod.REINTENTOS_CAIDA)  # cada tanda de 10 se repite tras esperar
+    assert f.esperas == [main_mod.ESPERA_CAIDA] * main_mod.REINTENTOS_CAIDA
     assert (res.total, res.exitosas, res.fallidas) == (12, 0, 12)
     assert any("Fuente no disponible" in a for a in avisos)
     motivos = [x["motivo"] for x in store.filas_reporte(res.ciclo_id)]
     assert motivos.count(MOTIVO_DETENIDO) == 2
+
+
+def test_r5_si_el_portal_vuelve_tras_esperar_el_ciclo_se_completa(tmp_path):
+    radicados = [Radicado(f"{i:023d}") for i in range(1, 13)]
+    caida = Consulta(FALLIDA, motivo="HTTP 502", falla_portal=True)
+
+    class Intermitente(FetcherFalso):
+        def consultar(self, r):
+            super().consultar(r)
+            return ok(act(1)) if self.esperas else caida  # tras la primera espera responde bien
+
+    f = Intermitente({r.radicado: None for r in radicados})
+    store, avisos = Store(":memory:"), []
+    res = correr(tmp_path, radicados, f, store, Reloj(), avisos)
+    assert res.estado == "Completo"
+    assert (res.total, res.exitosas, res.fallidas) == (12, 12, 0)  # las 10 fallidas se reintentaron
+    assert f.esperas == [main_mod.ESPERA_CAIDA]
+    assert any("Esperando" in a for a in avisos)
 
 
 def test_ciclo_interrumpido_se_reanuda_sin_repetir_consultas(tmp_path):
@@ -794,3 +817,15 @@ def test_las_filas_sin_radicado_se_avisan(tmp_path, monkeypatch):
     cfg = main_mod.cargar_config(args[args.index("--config") + 1])
     assert main_mod.ejecutar_ciclo(cfg, avisar_fn=avisos.append).codigo == 0
     assert any("sin radicado" in a for a in avisos)
+
+
+def test_con_las_consultas_apagadas_no_se_consulta_ni_con_forzar(tmp_path, monkeypatch, capsys):
+    from consultor.ajustes import guardar_activas
+
+    args = preparar(tmp_path, monkeypatch)
+    guardar_activas(tmp_path / "datos", False)
+    assert main_mod.ejecutar(args + ["--forzar"]) == 3
+    assert "apagadas" in capsys.readouterr().out
+    assert not (tmp_path / "datos" / "c.db").exists()  # ni siquiera abrió la base
+    guardar_activas(tmp_path / "datos", True)
+    assert main_mod.ejecutar(args) == 0

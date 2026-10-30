@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .ajustes import DIAS_POR_DEFECTO, leer_dias
+from .ajustes import DIAS_POR_DEFECTO, consultas_activas, leer_dias
 from .bloqueo import Bloqueo, CicloEnCurso
 from .comparator import comparar
 from .consola import barra
@@ -22,6 +22,9 @@ from .store import Store
 # R5 se evalúa solo después de esta cantidad de consultas, para que dos fallos
 # seguidos al inicio no detengan un ciclo de 44 radicados.
 MIN_MUESTRA = 10
+# Si R5 se dispara, el ciclo espera y reintenta lo fallido antes de darse por vencido.
+ESPERA_CAIDA = 600
+REINTENTOS_CAIDA = 2
 MOTIVO_DETENIDO = "ciclo detenido: fuente no disponible"
 ESTADO_CANCELADO = "Cancelado por el usuario"
 ESTADO_PAUSADO = "Pausado: el portal bloqueó las consultas"
@@ -69,6 +72,7 @@ def correr_ciclo(
     consultados = fallas = cambios_api = 0
     detenido = bloqueado = cancelo = False
     ultimo = len(radicados) - 1
+    caidas = 0
     store.registrar_radicados(radicados)
 
     def avisar_cancelado():
@@ -78,7 +82,10 @@ def correr_ciclo(
             f"Quedan {pendientes} sin consultar. Puede continuar más tarde y seguirá desde ahí."
         )
 
-    for i, r in enumerate(radicados):
+    i = 0
+    while i < len(radicados):
+        r = radicados[i]
+        i += 1
         if cancelado and cancelado():
             cancelo = True
             avisar_cancelado()
@@ -125,15 +132,30 @@ def correr_ciclo(
             fallas += consulta.falla_portal
             cambios_api += consulta.estado == ERROR
             if consultados >= MIN_MUESTRA and fallas / consultados > max_fallas:  # R5
+                if caidas < REINTENTOS_CAIDA and not cambios_api:  # un cambio de la API no se arregla esperando
+                    caidas += 1
+                    avisar_fn(
+                        f"El portal no responde: fallaron {fallas} de {consultados} consultas. "
+                        f"Esperando {ESPERA_CAIDA // 60} min para reintentar ({caidas} de {REINTENTOS_CAIDA})."
+                    )
+                    try:
+                        fetcher.esperar(ESPERA_CAIDA)
+                    except CicloCancelado:
+                        cancelo = True
+                        avisar_cancelado()
+                        break
+                    store.descartar_fallidas(ciclo_id)
+                    i = consultados = fallas = cambios_api = 0  # vuelve al inicio: lo exitoso se salta
+                    continue
                 detenido = True
                 avisar_fn(
                     f"Fuente no disponible: fallaron {fallas} de {consultados} consultas. "
                     "Ciclo detenido, activar consulta manual."
                 )
-            elif i < ultimo:
+            elif i <= ultimo:
                 fetcher.pausar()
         if progreso:
-            progreso(i + 1, len(radicados), r.radicado)
+            progreso(i, len(radicados), r.radicado)
 
     fuente_caida = consultados > 0 and fallas / consultados > max_fallas
     if cambios_api:
@@ -242,6 +264,10 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
         if avisar_fn:
             avisar_fn(texto)
 
+    if not consultas_activas(Path(cfg["salida"]["base_datos"]).parent):  # interruptor del equipo; --forzar no lo salta
+        msg = "Las consultas están apagadas en este equipo. Enciéndalas desde la ventana (botón «Encender consultas»)."
+        aviso(msg)
+        return Ejecucion(3, msg, None)
     ruta_cancelar = Path(cfg["salida"]["base_datos"]).parent / "cancelar.txt"
     minimo = cfg.get("ejecucion", {}).get("min_minutos_entre_ciclos", 30)
     inicio = datetime.now()

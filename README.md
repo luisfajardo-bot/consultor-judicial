@@ -58,19 +58,11 @@ En Linux sin librerías gráficas, las pruebas de la ventana se saltan solas.
 
 Abrir `reportes\reporte_ciclo_NNNN_AAAA-MM-DD.xlsx`, hoja Alertas. En cada fila con ID de alerta elegir en la columna Decisión: Confirmada o Descartada (y escribir el nombre en Validó). Guardar y cerrar el archivo. El ciclo siguiente lee la decisión.
 
-## Programación (la configura Sistemas)
-
-```
-schtasks /Create /TN "ConsultorJudicial" /TR "C:\consultor_judicial\scripts\ejecutar_ciclo.bat" /SC WEEKLY /D MON,WED,FRI /ST 06:30 /RU DOMINIO\cuenta_servicio /RP *
-```
-
-La cuenta debe tener permiso de lectura sobre el Excel de radicados y de escritura sobre `datos\` y `reportes\`.
-
 ## Ejecutar a mano
 
 Doble clic en `scripts\ejecutar_ahora.bat`. Se ve una barra de avance con el radicado que se está consultando; no cierres la ventana. Al terminar, el reporte se abre en Excel.
 
-- Si ya hay una consulta en curso (por ejemplo la tarea programada), el programa lo dice, muestra su avance y no hace nada: el candado impide dos ciclos a la vez.
+- Si ya hay una consulta en curso (por ejemplo, otra persona desde su equipo), el programa lo dice, muestra su avance y no hace nada: el candado impide dos ciclos a la vez.
 - Si la última consulta terminó hace menos de 30 minutos, el programa lo dice y no hace nada, para no repetir consultas al portal. El límite se cambia en `config.toml`, sección `[ejecucion]`, con `min_minutos_entre_ciclos` (0 lo desactiva). Quien administra la herramienta puede saltarlo con `--forzar`.
 - Código de salida 3: no se ejecutó por candado o por el límite. Los demás: 0 completo, 1 detenido o con fallas, 2 error inesperado.
 
@@ -82,15 +74,14 @@ Doble clic en `scripts\abrir_panel.bat`. Se abre una ventana que muestra:
 - El resumen de la última consulta: cuántos radicados se consultaron, cuántos posibles novedades hay y cuántas alertas faltan por validar.
 - El botón **Consultar ahora**, que lanza una consulta con las mismas reglas de siempre.
 - El botón **Abrir último reporte**, que abre el Excel más reciente.
-- El botón **Cancelar**, activo solo mientras hay una consulta en curso (también la programada). Pide confirmación y detiene la consulta al terminar el radicado actual. Lo ya consultado se conserva y se puede continuar más tarde: la siguiente consulta del mismo día sigue desde donde quedó, sin esperar el límite entre ejecuciones.
+- El botón **Cancelar**, activo solo mientras hay una consulta en curso. Pide confirmación y detiene la consulta al terminar el radicado actual. Lo ya consultado se conserva y se puede continuar más tarde: la siguiente consulta del mismo día sigue desde donde quedó, sin esperar el límite entre ejecuciones.
+- El botón **Apagar consultas / Encender consultas**: interruptor de este equipo. Apagado, **Consultar ahora** (ni `--forzar`) no sale a la Rama Judicial. Sirve cuando varias personas consultan desde la misma red: el portal cuenta todo lo que sale de una misma IP, así que conviene que solo un equipo consulte a la vez. No detiene una consulta que ya esté en curso (para eso, **Cancelar**). Queda en `datosjustes.json`; si ese archivo falta, las consultas están encendidas.
 
 - Un campo **días**: en un radicado que se consulta por primera vez, lo registrado en esos últimos días sale como POSIBLE NOVEDAD, y lo más antiguo queda como referencia. Por defecto 7; 0 no avisa nada. Se guarda al salir del campo o con Enter, rige desde la siguiente consulta y queda en `datos\ajustes.json`. Si ese archivo existe, manda sobre `[primera_consulta]` de `config.toml`.
 
-Si ya hay otra consulta corriendo (por ejemplo la programada de las 9:00), el botón **Consultar ahora** queda desactivado y la barra muestra su avance. Cuando aparece "Sin avance hace N min", casi siempre es el portal pidiendo esperar: no hay que hacer nada, la consulta sigue sola. La ventana no envía datos a ningún sitio: solo lee los archivos de esta carpeta.
+Si ya hay otra consulta corriendo (por ejemplo, otra persona desde su equipo), el botón **Consultar ahora** queda desactivado y la barra muestra su avance. Cuando aparece "Sin avance hace N min", casi siempre es el portal pidiendo esperar: no hay que hacer nada, la consulta sigue sola. La ventana no envía datos a ningún sitio: solo lee los archivos de esta carpeta.
 
 Si la consulta corre en una consola, Ctrl+C también la cancela de forma segura. Cerrar la ventana negra, en cambio, corta el programa a la fuerza: el ciclo queda interrumpido y se reanuda en la siguiente consulta, pero conviene usar **Cancelar**.
-
-La consulta programada corre oculta, sin ventana de consola. Sus mensajes quedan en `reportes\avisos.log` y, si algo falla antes de que arranque el registro, en `reportes\consola.log`.
 
 ## Reportes antiguos y copias de seguridad
 
