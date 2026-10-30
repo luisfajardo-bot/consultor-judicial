@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .ajustes import DIAS_POR_DEFECTO, leer_dias
+from .ajustes import DIAS_POR_DEFECTO, consultas_activas, leer_dias
 from .bloqueo import Bloqueo, CicloEnCurso
 from .comparator import comparar
 from .consola import barra
@@ -264,6 +264,10 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
         if avisar_fn:
             avisar_fn(texto)
 
+    if not consultas_activas(Path(cfg["salida"]["base_datos"]).parent):  # interruptor del equipo; --forzar no lo salta
+        msg = "Las consultas están apagadas en este equipo. Enciéndalas desde la ventana (botón «Encender consultas»)."
+        aviso(msg)
+        return Ejecucion(3, msg, None)
     ruta_cancelar = Path(cfg["salida"]["base_datos"]).parent / "cancelar.txt"
     minimo = cfg.get("ejecucion", {}).get("min_minutos_entre_ciclos", 30)
     inicio = datetime.now()

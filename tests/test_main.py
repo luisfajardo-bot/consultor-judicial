@@ -817,3 +817,15 @@ def test_las_filas_sin_radicado_se_avisan(tmp_path, monkeypatch):
     cfg = main_mod.cargar_config(args[args.index("--config") + 1])
     assert main_mod.ejecutar_ciclo(cfg, avisar_fn=avisos.append).codigo == 0
     assert any("sin radicado" in a for a in avisos)
+
+
+def test_con_las_consultas_apagadas_no_se_consulta_ni_con_forzar(tmp_path, monkeypatch, capsys):
+    from consultor.ajustes import guardar_activas
+
+    args = preparar(tmp_path, monkeypatch)
+    guardar_activas(tmp_path / "datos", False)
+    assert main_mod.ejecutar(args + ["--forzar"]) == 3
+    assert "apagadas" in capsys.readouterr().out
+    assert not (tmp_path / "datos" / "c.db").exists()  # ni siquiera abrió la base
+    guardar_activas(tmp_path / "datos", True)
+    assert main_mod.ejecutar(args) == 0

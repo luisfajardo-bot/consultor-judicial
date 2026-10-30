@@ -190,3 +190,19 @@ def test_si_el_refresco_se_recupera_la_ventana_limpia_el_aviso(raiz, tmp_path, m
     monkeypatch.setattr(v, "refrescar", lambda: None)
     v.sondear()
     assert v.etiqueta_estado.cget("text") == ""
+
+
+def test_apagar_desde_la_ventana_guarda_el_interruptor_y_bloquea_consultar(raiz, tmp_path, monkeypatch):
+    from consultor.ajustes import consultas_activas
+
+    v = Ventana(raiz, _cfg(tmp_path, monkeypatch))
+    v.refrescar()
+    assert _estado(v.boton_consultar) == "normal"
+    v.boton_encendido.invoke()
+    v.refrescar()
+    assert not consultas_activas(tmp_path / "datos")
+    assert _estado(v.boton_consultar) == "disabled"
+    assert "APAGADAS" in v.etiqueta_encendido.cget("text")
+    v.boton_encendido.invoke()
+    v.refrescar()
+    assert consultas_activas(tmp_path / "datos") and _estado(v.boton_consultar) == "normal"

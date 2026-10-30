@@ -7,7 +7,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from .ajustes import DIAS_MAXIMO, DIAS_POR_DEFECTO, guardar_dias, leer_dias
+from .ajustes import DIAS_MAXIMO, DIAS_POR_DEFECTO, consultas_activas, guardar_activas, guardar_dias, leer_dias
 from .main import Ejecucion, cargar_config, ejecutar_ciclo
 from .panel import leer_avance, resumen_ultimo_ciclo, solicitar_cancelacion, texto_avance, texto_resumen, ultimo_reporte
 from .store import Store
@@ -45,6 +45,8 @@ class Ventana:
         marco.pack(fill="both", expand=True)
 
         ttk.Label(marco, text="Consultor Judicial", font=FUENTE_TITULO).pack(anchor="w")
+        self.etiqueta_encendido = tk.Label(marco, text="", font=FUENTE, wraplength=520, justify="left", anchor="w")
+        self.etiqueta_encendido.pack(anchor="w", fill="x", pady=(4, 0))
         self.etiqueta_resumen = ttk.Label(marco, text=self.texto_resumen_actual, justify="left", wraplength=520)
         self.etiqueta_resumen.pack(anchor="w", pady=(8, 8))
         self.barra = ttk.Progressbar(marco, length=520, mode="determinate")
@@ -61,8 +63,10 @@ class Ventana:
         self.boton_reporte = ttk.Button(botones, text="Abrir último reporte", command=self.abrir_reporte)
         self.boton_reporte.pack(side="left", padx=(0, 8))
         self.boton_cancelar = ttk.Button(botones, text="Cancelar", command=self.cancelar, state="disabled")
-        self.boton_cancelar.pack(side="left")
-        for b in (self.boton_consultar, self.boton_reporte, self.boton_cancelar):
+        self.boton_cancelar.pack(side="left", padx=(0, 8))
+        self.boton_encendido = ttk.Button(botones, command=self.alternar_encendido)
+        self.boton_encendido.pack(side="left")
+        for b in (self.boton_consultar, self.boton_reporte, self.boton_cancelar, self.boton_encendido):
             b.bind("<Return>", lambda e: e.widget.invoke())
 
         ttk.Label(
@@ -97,7 +101,20 @@ class Ventana:
         texto = "Guardado: no se avisará nada de las consultas por primera vez." if dias == 0 else f"Guardado: {dias} días. Rige desde la próxima consulta."
         self.etiqueta_ajuste.config(text=texto, fg=VERDE)
 
+    def alternar_encendido(self):
+        guardar_activas(self.carpeta_datos, not consultas_activas(self.carpeta_datos))
+        self.refrescar()
+
     def refrescar(self):
+        activas = consultas_activas(self.carpeta_datos)
+        if activas:
+            self.etiqueta_encendido.config(text="Consultas de este equipo: ENCENDIDAS", fg=VERDE)
+        else:
+            self.etiqueta_encendido.config(
+                text="Consultas de este equipo: APAGADAS. «Consultar ahora» no sale a la Rama Judicial.",
+                fg=ROJO,
+            )
+        self.boton_encendido.config(text="Apagar consultas" if activas else "Encender consultas")
         avance = leer_avance(self.carpeta_datos)
         corriendo = bool(self.hilo and self.hilo.is_alive())
         if avance:
@@ -119,7 +136,7 @@ class Ventana:
         if not avance:
             self.cancelando = False
         self.etiqueta_resumen.config(text=self.texto_resumen_actual)
-        self.boton_consultar.config(state="disabled" if avance or corriendo else "normal")
+        self.boton_consultar.config(state="disabled" if avance or corriendo or not activas else "normal")
         self.boton_cancelar.config(state="normal" if avance and not self.cancelando else "disabled")
 
     def consultar(self):

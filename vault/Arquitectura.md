@@ -1,6 +1,6 @@
 # Arquitectura
 
-Pipeline lineal. Cada módulo tiene una responsabilidad y se prueba solo. Estado: 258 pruebas, probado en Windows (Python 3.14) y en Linux (Python 3.12).
+Pipeline lineal. Cada módulo tiene una responsabilidad y se prueba solo. Estado: 263 pruebas, probado en Windows (Python 3.14) y en Linux (Python 3.12).
 
 ```mermaid
 flowchart LR
@@ -51,7 +51,7 @@ flowchart LR
 
 - Consola: `python -m consultor run`.
 - Ventana (solo Windows): `python -m consultor ventana`, o `scripts\abrir_panel.bat`.
-- Tarea programada de Windows `ConsultorJudicial`: lunes, miércoles y viernes a las 9:00, con `scripts\ejecutar_ciclo.bat`.
+- Sin tarea programada: las consultas se lanzan a mano con la ventana o `scripts\ejecutar_ahora.bat`.
 - Docker: no hay Dockerfile todavía. Funciona en Linux desde la línea de comandos, sin ventana. Ver [[Fase de escalamiento]].
 
 Ver [[Decisiones]] para el porqué de cada elección y [[Operación y límites del portal]] para lo medido contra el portal real.
