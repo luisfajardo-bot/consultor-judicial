@@ -14,6 +14,20 @@ Esa separación es la **arquitectura para escalar**: otra vista (por ejemplo una
 - Resumen de la última consulta: consultados, exitosos, sin verificar, posibles novedades y alertas por validar.
 - Botón **Consultar ahora**: corre `ejecutar_ciclo` en un hilo aparte. Se desactiva mientras corre otro ciclo, sea de la ventana o de otro equipo.
 - Botón **Abrir último reporte**.
+- **Alertas por decidir** (ver abajo), el campo de días y el aviso al cerrar.
+
+## Decidir alertas en la ventana
+- Dos pestañas: **Por decidir · últimos N días** y **Anteriores sin decidir**. N es el campo de días (el mismo que usa la primera consulta de un radicado). La fecha de detección es la de la consulta que creó la alerta, no la de la actuación.
+- Tabla con casillas, **Seleccionar todas**, **Confirmar seleccionadas** y **Descartar seleccionadas** (pregunta si son más de 5), detalle de la fila y **Abrir en el portal** (copia el radicado).
+- **Ver decididas**: filtro, corrección a Confirmada, Descartada o Pendiente, e historial por alerta. Todo pasa por `Store.decidir`, que cambia `alerta` e inserta en `decision` en una sola transacción.
+- La lista no se recarga en cada vuelta de `sondear()`: solo al abrir, tras decidir, al terminar una consulta, al guardar días o cuando cambia el último ciclo. Se conservan las casillas marcadas.
+- Con la base ocupada por una consulta, la ventana avisa y reintenta; no se cuelga.
+- `panel.py` tiene la lógica (`separar`, `contar_para_regla`, `evaluar_obligacion`, `accion_al_cerrar`, textos); `ventana.py` solo pinta.
+
+## Al cerrar y regla de puesta al día
+- `WM_DELETE_WINDOW` pasa por `Ventana.al_cerrar`: 1) obligación activa: aviso sin opción de cerrar ("bloqueada"); 2) pendientes en el rango: pregunta si cierra igual ("cancelada" o "cerrada"); 3) nada pendiente: cierra. Una consulta en curso no cambia los pasos.
+- La regla (R10 en [[Reglas de negocio]]) está **apagada** por defecto: se enciende en `[alertas]` de `config.toml`. Activa, muestra un aviso rojo de una línea sobre las pestañas y abre en Anteriores. **Consultar ahora** no se bloquea.
+- Usa su propio corte (`dias_corte_regla`), no el campo de días de la ventana. La obligación se guarda en `estado_app` ([[store]]); si la base está ocupada al guardarla, la ventana conserva el último estado conocido.
 
 ## Estado confiable y cancelación
 - El avance solo se muestra si el candado está realmente tomado ([[bloqueo]]). Un archivo viejo no hace creer que hay una consulta corriendo ni desactiva **Consultar ahora**.

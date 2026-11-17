@@ -13,6 +13,10 @@ from .ajustes import DIAS_MAXIMO, DIAS_POR_DEFECTO, consultas_activas, guardar_a
 from .main import Ejecucion, cargar_config, ejecutar_ciclo
 from .models import CONFIRMADA, DESCARTADA, PENDIENTE
 from .panel import (
+    accion_al_cerrar,
+    config_alertas,
+    contar_para_regla,
+    evaluar_obligacion,
     leer_avance,
     resumen_ultimo_ciclo,
     separar,
@@ -20,6 +24,7 @@ from .panel import (
     texto_avance,
     texto_confirmar_bloque,
     texto_dias_guardado,
+    texto_obligacion,
     texto_pestana_anteriores,
     texto_pestana_rango,
     texto_resumen,
@@ -84,8 +89,13 @@ class Ventana:
         preguntar=None,
         informar=None,
         hoy=date.today,
+        cerrar=None,
     ):
         self.raiz, self.cfg, self.ejecutar, self.hoy = raiz, cfg, ejecutar, hoy
+        self.cerrar = cerrar or raiz.destroy
+        self.config_alertas = config_alertas(cfg)
+        self.obligacion = False  # última obligación conocida; si la base está ocupada se conserva
+        self.en_rango = self.anteriores_regla = 0
         self.preguntar = preguntar or messagebox.askyesno
         self.informar = informar or messagebox.showwarning
         self.marcadas: set[int] = set()
@@ -165,6 +175,10 @@ class Ventana:
         for _ in range(2):  # las pestañas solo eligen la lista; la tabla va debajo de la ayuda y los botones
             self.pestanas.add(ttk.Frame(self.pestanas, height=1))
         self.pestanas.pack(anchor="w", fill="x", pady=(8, 0))
+        # una sola línea ancha y oculta con pack_forget: sin obligación no ocupa espacio (la ventana debe caber en 768 px)
+        self.etiqueta_obligacion = tk.Label(
+            marco, text="", font=FUENTE, fg="white", bg=ROJO, wraplength=ANCHO_AYUDA, justify="left", anchor="w"
+        )
         self.pestanas.bind("<<NotebookTabChanged>>", lambda e: self._pintar_pestana())
         ttk.Label(marco, text=AYUDA, wraplength=ANCHO_AYUDA, justify="left").pack(anchor="w", pady=(4, 4))
 
@@ -233,6 +247,12 @@ class Ventana:
             try:
                 pendientes = store.alertas_pendientes()
                 ciclo = store.ultimo_ciclo()
+                anteriores_regla = contar_para_regla(pendientes, self.hoy(), self.config_alertas)
+                activa = evaluar_obligacion(store.obligacion_activa(), anteriores_regla, self.config_alertas)
+                try:
+                    store.fijar_obligacion(activa)
+                except sqlite3.OperationalError:
+                    pass  # base ocupada: rige el estado calculado ahora; se vuelve a guardar en la próxima recarga
             finally:
                 store.con.close()
         except sqlite3.OperationalError:
@@ -241,6 +261,16 @@ class Ventana:
         self.ciclo_recargado = self.ultimo_ciclo_id = ciclo["id"] if ciclo else None
         dias = self._dias_guardados()
         en_rango, anteriores = separar(pendientes, self.hoy(), dias)
+        self.en_rango, self.anteriores_regla = len(en_rango), anteriores_regla
+        nueva = activa and not self.obligacion  # al activarse (o al abrir) se muestra Anteriores una vez
+        self.obligacion = activa
+        if activa:
+            self.etiqueta_obligacion.config(text=texto_obligacion(anteriores_regla, self.config_alertas))
+            self.etiqueta_obligacion.pack(anchor="w", fill="x", pady=(8, 0), before=self.pestanas)
+        else:
+            self.etiqueta_obligacion.pack_forget()
+        if nueva:
+            self.pestanas.select(1)
         self._alertas = {a["id"]: a for a in pendientes}
         self.marcadas &= set(self._alertas)
         for tabla, filas in ((self.tabla_rango, en_rango), (self.tabla_anteriores, anteriores)):
@@ -254,6 +284,20 @@ class Ventana:
         self.pestanas.tab(0, text=texto_pestana_rango(dias, len(en_rango)))
         self.pestanas.tab(1, text=texto_pestana_anteriores(len(anteriores)))
         self._pintar_pestana()
+
+    def al_cerrar(self) -> str:
+        """Devuelve "cerrada", "bloqueada" o "cancelada". Con una consulta en curso rige lo mismo (spec 5.6)."""
+        self.recargar_alertas()  # si la base está ocupada se usa lo último leído
+        accion = accion_al_cerrar(
+            self.obligacion, self.anteriores_regla, self.en_rango, self._dias_guardados(), self.config_alertas
+        )
+        if accion.tipo == "bloquear":
+            self.informar("Alertas sin decidir", accion.texto)
+            return "bloqueada"
+        if accion.tipo == "preguntar" and not self.preguntar("Alertas sin decidir", accion.texto):
+            return "cancelada"
+        self.cerrar()
+        return "cerrada"
 
     def _valores(self, a):
         radicado = a["radicado"]
@@ -607,6 +651,7 @@ def abrir(ruta_config) -> int:
     cfg = cargar_config(ruta_config)
     raiz = tk.Tk()
     v = Ventana(raiz, cfg)
+    raiz.protocol("WM_DELETE_WINDOW", v.al_cerrar)
     v.sondear()
     raiz.mainloop()
     return 0

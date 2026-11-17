@@ -39,3 +39,12 @@ borrar_archivo_tras_dias = 0
 respaldo_cada_dias = 7
 respaldos_a_conservar = 8
 carpeta_respaldo = ""
+
+[alertas]
+# Regla de puesta al día: apagada. Se enciende cuando lo indique la Gerencia Jurídica.
+# Encendida, si las alertas anteriores sin decidir (detectadas hace más de dias_corte_regla días)
+# pasan de umbral_anteriores, la ventana no se cierra hasta dejarlas en menos de objetivo_anteriores.
+exigir_puesta_al_dia = false
+umbral_anteriores = 30
+objetivo_anteriores = 10
+dias_corte_regla = 7

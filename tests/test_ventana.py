@@ -545,3 +545,128 @@ def test_corregir_con_la_base_ocupada_avisa(raiz, tmp_path, monkeypatch):
         assert "ocupada" in d.etiqueta_aviso.cget("text")
     finally:
         d.ventana.destroy()
+
+
+def _cerrar_ventana(raiz, cfg, preguntar=None, informar=None):
+    cerradas, avisos, preguntas = [], [], []
+    v = _ventana(
+        raiz,
+        cfg,
+        preguntar=preguntar or (lambda t, x: preguntas.append(x) or True),
+        informar=lambda t, x: avisos.append(x),
+        cerrar=lambda: cerradas.append(1),
+    )
+    v.recargar_alertas()
+    return v, cerradas, avisos, preguntas
+
+
+def _con_regla(cfg):
+    cfg["alertas"] = {"exigir_puesta_al_dia": True}
+
+
+def test_cerrar_sin_pendientes_cierra(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    v, cerradas, avisos, preguntas = _cerrar_ventana(raiz, cfg)
+    assert v.al_cerrar() == "cerrada" and cerradas and not avisos and not preguntas
+
+
+def test_cerrar_con_pendientes_pregunta_y_respeta_la_respuesta(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=3)
+    v, cerradas, _, preguntas = _cerrar_ventana(raiz, cfg, preguntar=lambda t, x: False)
+    assert v.al_cerrar() == "cancelada" and not cerradas
+    v2, cerradas2, _, preguntas2 = _cerrar_ventana(raiz, cfg)
+    assert v2.al_cerrar() == "cerrada" and cerradas2
+    assert preguntas2 == ["Quedan 3 alertas por decidir de los últimos 7 días. ¿Cerrar de todas formas?"]
+
+
+def test_regla_apagada_no_bloquea_aunque_haya_44_anteriores(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, cerradas, avisos, _ = _cerrar_ventana(raiz, cfg)
+    assert v.al_cerrar() == "cerrada" and cerradas and not avisos
+    assert not v.etiqueta_obligacion.winfo_ismapped() and not v.etiqueta_obligacion.winfo_manager()
+
+
+def test_regla_encendida_bloquea_hasta_bajar_de_10_y_sobrevive_a_reabrir(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    ids = _con_alertas(cfg, hace_20_dias=44)
+    v, cerradas, avisos, _ = _cerrar_ventana(raiz, cfg)
+    assert v.al_cerrar() == "bloqueada" and not cerradas
+    assert "Faltan 35." in v.etiqueta_obligacion.cget("text")
+    assert avisos and "Faltan 35." in avisos[0]
+    assert v.pestanas.index("current") == 1
+    _decidir(cfg, ids[:20])  # quedan 24: sigue activa aunque sea < 30
+    v2, cerradas2, _, _ = _cerrar_ventana(raiz, cfg)
+    assert v2.al_cerrar() == "bloqueada"
+    _decidir(cfg, ids[20:35])  # quedan 9
+    v2.recargar_alertas()
+    assert v2.al_cerrar() == "cerrada" and cerradas2
+    assert not v2.etiqueta_obligacion.winfo_manager()
+
+
+def test_la_regla_usa_su_propio_corte_y_no_el_campo_de_dias(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, _, _, _ = _cerrar_ventana(raiz, cfg)
+    v.dias.set("365")
+    v.guardar_dias()  # las 44 pasan a Por decidir, pero para la regla siguen siendo anteriores
+    assert v.al_cerrar() == "bloqueada"
+
+
+def test_con_consulta_en_curso_el_cierre_sigue_las_mismas_reglas(raiz, tmp_path, monkeypatch):
+    import threading
+
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, cerradas, _, _ = _cerrar_ventana(raiz, cfg)
+    parar = threading.Event()
+    v.hilo = threading.Thread(target=parar.wait, daemon=True)
+    v.hilo.start()
+    try:
+        assert v.al_cerrar() == "bloqueada" and not cerradas
+    finally:
+        parar.set()
+        v.hilo.join()
+
+
+def test_consultar_ahora_no_se_bloquea_con_la_obligacion_activa(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, _, _, _ = _cerrar_ventana(raiz, cfg)
+    v.refrescar()
+    assert v.obligacion and str(v.boton_consultar.cget("state")) == "normal"
+
+
+def test_base_ocupada_al_fijar_la_obligacion_no_rompe_y_conserva_el_estado(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, _, _, _ = _cerrar_ventana(raiz, cfg)
+    assert v.obligacion
+
+    def ocupada(self, activa):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Store, "fijar_obligacion", ocupada)
+    v.recargar_alertas()
+    assert v.obligacion and v.al_cerrar() == "bloqueada"
+
+
+def test_con_el_aviso_rojo_visible_la_ventana_sigue_cabiendo_en_700_px(raiz, tmp_path, monkeypatch):
+    escala = raiz.tk.call("tk", "scaling")
+    raiz.tk.call("tk", "scaling", 1.33)
+    try:
+        cfg = _cfg(tmp_path, monkeypatch)
+        _con_regla(cfg)
+        _con_alertas(cfg, hoy=8, hace_20_dias=44)
+        v, _, _, _ = _cerrar_ventana(raiz, cfg)
+        raiz.update_idletasks()
+        assert v.etiqueta_obligacion.winfo_manager() == "pack"
+        assert raiz.winfo_reqheight() <= 700
+    finally:
+        raiz.tk.call("tk", "scaling", escala)
