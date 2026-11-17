@@ -11,7 +11,7 @@ from tkinter import messagebox, ttk
 
 from .ajustes import DIAS_MAXIMO, DIAS_POR_DEFECTO, consultas_activas, guardar_activas, guardar_dias, leer_dias
 from .main import Ejecucion, cargar_config, ejecutar_ciclo
-from .models import CONFIRMADA, DESCARTADA
+from .models import CONFIRMADA, DESCARTADA, PENDIENTE
 from .panel import (
     leer_avance,
     resumen_ultimo_ciclo,
@@ -47,6 +47,14 @@ ANCHO_AYUDA = 900  # la ayuda en una línea: tabla y detalle ya ocupan ese ancho
 LINEAS_DETALLE = 5
 ESPERA_BASE_SEGUNDOS = 2  # lo que espera la ventana para escribir si una consulta tiene la base
 SIN_CARGAR = object()  # la lista aún no se pudo leer: sondear() reintenta
+FILTROS = ("Todas", "Confirmada", "Descartada")
+COLUMNAS_DECIDIDAS = (
+    ("decision", "Decisión", 90),
+    ("decidida", "Decidida en", 130),
+    ("por", "Por", 90),
+    ("radicado", "Radicado", 150),
+    ("actuacion", "Actuación", 260),
+)
 MARCADA, SIN_MARCAR = "☑", "☐"
 COLUMNAS = (
     ("marca", "", 32),
@@ -81,6 +89,7 @@ class Ventana:
         self.preguntar = preguntar or messagebox.askyesno
         self.informar = informar or messagebox.showwarning
         self.marcadas: set[int] = set()
+        self.decididas = None  # la VentanaDecididas abierta, si hay una
         self._alertas: dict[int, dict] = {}
         self.ciclo_recargado = SIN_CARGAR  # último ciclo terminado cuando se cargó la lista
         self.ultimo_ciclo_id = None  # último ciclo terminado que vio refrescar()
@@ -168,7 +177,7 @@ class Ventana:
         self.boton_descartar = ttk.Button(
             botones, text="Descartar seleccionadas", command=lambda: self.aplicar(DESCARTADA)
         )
-        self.boton_decididas = ttk.Button(botones, text="Ver decididas", state="disabled")
+        self.boton_decididas = ttk.Button(botones, text="Ver decididas", command=self.ver_decididas)
         for b in (self.boton_todas, self.boton_confirmar, self.boton_descartar, self.boton_decididas):
             b.pack(side="left", padx=(0, 8))
             b.bind("<Return>", lambda e: e.widget.invoke())
@@ -361,6 +370,15 @@ class Ventana:
             self.raiz.clipboard_append(a["radicado"])
             self.etiqueta_alertas.config(text=RADICADO_COPIADO, fg=VERDE)
 
+    def ver_decididas(self) -> "VentanaDecididas":
+        if self.decididas is not None and self.decididas.ventana.winfo_exists():
+            self.decididas.ventana.deiconify()
+            self.decididas.ventana.lift()
+            self.decididas.ventana.focus_force()
+            return self.decididas
+        self.decididas = VentanaDecididas(self)
+        return self.decididas
+
     def _dias_config(self):
         return self.cfg.get("primera_consulta", {}).get("alertar_ultimos_dias", DIAS_POR_DEFECTO)
 
@@ -470,6 +488,119 @@ class Ventana:
             self.etiqueta_estado.config(text="Todavía no hay reportes.", fg=ROJO)
         elif hasattr(os, "startfile"):
             os.startfile(ruta)
+
+
+class VentanaDecididas:
+    """Alertas ya decididas: se filtran, se corrigen (también a Pendiente) y muestran su historial."""
+
+    def __init__(self, principal: Ventana):
+        self.principal = principal
+        self.ventana = tk.Toplevel(principal.raiz)
+        self.ventana.title("Alertas decididas")
+        marco = ttk.Frame(self.ventana, padding=12)
+        marco.pack(fill="both", expand=True)
+
+        arriba = ttk.Frame(marco)
+        arriba.pack(anchor="w", fill="x")
+        ttk.Label(arriba, text="Mostrar:").pack(side="left", padx=(0, 6))
+        self.filtro = tk.StringVar(value=FILTROS[0])
+        self.selector = ttk.Combobox(arriba, textvariable=self.filtro, values=FILTROS, state="readonly", width=12)
+        self.selector.pack(side="left")
+        self.selector.bind("<<ComboboxSelected>>", lambda e: self.recargar())
+
+        zona = ttk.Frame(marco)
+        zona.pack(fill="both", expand=True, pady=(8, 0))
+        self.tabla = ttk.Treeview(
+            zona, columns=[c for c, _, _ in COLUMNAS_DECIDIDAS], show="headings", height=10, selectmode="extended"
+        )
+        for columna, titulo, ancho in COLUMNAS_DECIDIDAS:
+            self.tabla.heading(columna, text=titulo)
+            self.tabla.column(columna, width=ancho, stretch=columna == "actuacion", anchor="w")
+        barra = ttk.Scrollbar(zona, orient="vertical", command=self.tabla.yview)
+        self.tabla.configure(yscrollcommand=barra.set)
+        self.tabla.pack(side="left", fill="both", expand=True)
+        barra.pack(side="left", fill="y")
+        self.tabla.bind("<<TreeviewSelect>>", lambda e: self.mostrar_historial())
+
+        botones = ttk.Frame(marco)
+        botones.pack(anchor="w", pady=(8, 0))
+        ttk.Label(botones, text="Pasar seleccionadas a:").pack(side="left", padx=(0, 8))
+        for estado in (CONFIRMADA, DESCARTADA, PENDIENTE):
+            b = ttk.Button(botones, text=estado, command=lambda e=estado: self.corregir(e))
+            b.pack(side="left", padx=(0, 8))
+            b.bind("<Return>", lambda e: e.widget.invoke())
+        self.etiqueta_aviso = tk.Label(marco, text="", font=FUENTE, wraplength=640, justify="left", anchor="w")
+        self.etiqueta_aviso.pack(anchor="w", fill="x", pady=(4, 0))
+        self.etiqueta_historial = tk.Label(marco, text="", font=FUENTE, wraplength=640, justify="left", anchor="nw")
+        self.etiqueta_historial.pack(anchor="w", fill="x")
+        self.recargar()
+
+    def recargar(self) -> None:
+        estado = None if self.filtro.get() == FILTROS[0] else self.filtro.get()
+        try:
+            store = Store(self.principal.cfg["salida"]["base_datos"])
+            try:
+                filas = store.alertas_decididas(estado)
+            finally:
+                store.con.close()
+        except sqlite3.OperationalError:
+            self.etiqueta_aviso.config(text=BASE_OCUPADA, fg=ROJO)
+            return
+        seleccion = [i for i in self.tabla.selection()]
+        self.tabla.delete(*self.tabla.get_children())
+        for a in filas:
+            self.tabla.insert(
+                "",
+                "end",
+                iid=str(a["id"]),
+                values=(
+                    a["estado"],
+                    str(a["validada_en"] or "")[:16].replace("T", " "),
+                    a["validada_por"] or "",
+                    a["radicado"],
+                    a["actuacion"] or "",
+                ),
+            )
+        conservadas = [i for i in seleccion if self.tabla.exists(i)]
+        if conservadas:
+            self.tabla.selection_set(conservadas)
+        self.mostrar_historial()
+
+    def mostrar_historial(self) -> None:
+        seleccion = self.tabla.selection()
+        lineas = []
+        if len(seleccion) == 1:
+            try:
+                store = Store(self.principal.cfg["salida"]["base_datos"])
+                try:
+                    cambios = store.historial(int(seleccion[0]))
+                finally:
+                    store.con.close()
+            except sqlite3.OperationalError:
+                self.etiqueta_aviso.config(text=BASE_OCUPADA, fg=ROJO)
+                return
+            lineas = [
+                f"{str(c['momento'])[:16].replace('T', ' ')} · {c['usuario']} · "
+                f"{c['estado_anterior']} → {c['estado_nuevo']} ({c['origen']})"
+                for c in cambios
+            ]
+        self.etiqueta_historial.config(text="\n".join(lineas))
+
+    def corregir(self, estado: str) -> int:
+        """Pasa las alertas seleccionadas a `estado`. Devuelve cuántas cambiaron."""
+        ids = [int(i) for i in self.tabla.selection()]
+        if not ids:
+            self.etiqueta_aviso.config(text=SIN_SELECCION, fg=ROJO)
+            return 0
+        try:
+            cambiadas = self.principal._decidir(ids, estado)
+        except sqlite3.OperationalError:
+            self.etiqueta_aviso.config(text=BASE_OCUPADA, fg=ROJO)
+            return 0
+        self.etiqueta_aviso.config(text="")
+        self.recargar()
+        self.principal.recargar_alertas()
+        return cambiadas
 
 
 def abrir(ruta_config) -> int:

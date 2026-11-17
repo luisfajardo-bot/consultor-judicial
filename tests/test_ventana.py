@@ -9,7 +9,7 @@ tk = pytest.importorskip("tkinter", exc_type=ImportError)
 
 import consultor.main as main_mod  # noqa: E402
 from consultor.bloqueo import Bloqueo  # noqa: E402
-from consultor.models import CONFIRMADA, DESCARTADA, POSIBLE_NOVEDAD, Veredicto  # noqa: E402
+from consultor.models import CONFIRMADA, DESCARTADA, PENDIENTE, POSIBLE_NOVEDAD, Veredicto  # noqa: E402
 from consultor.reporter import ENLACE_PORTAL  # noqa: E402
 from consultor.store import Store  # noqa: E402
 from consultor.ventana import Ventana  # noqa: E402
@@ -465,3 +465,83 @@ def test_la_ventana_cabe_en_una_pantalla_de_768_px(raiz, tmp_path, monkeypatch):
         assert raiz.winfo_reqheight() <= 700 - 25
     finally:
         raiz.tk.call("tk", "scaling", escala)
+
+
+def test_corregir_una_descartada_a_pendiente_la_devuelve_a_la_lista(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2)
+    v = _ventana(raiz, cfg)
+    v.seleccionar_todas()
+    v.aplicar(DESCARTADA)
+    d = v.ver_decididas()
+    try:
+        d.tabla.selection_set(str(ids[0]))
+        assert d.corregir(PENDIENTE) == 1
+        assert str(ids[0]) in v.tabla_rango.get_children()
+        assert str(ids[0]) not in d.tabla.get_children()
+    finally:
+        d.ventana.destroy()
+
+
+def test_filtrar_decididas_y_ver_historial(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=3)
+    confirmadas, descartada = ids[:2], ids[2:]
+    _decidir(cfg, confirmadas, CONFIRMADA)
+    _decidir(cfg, descartada, DESCARTADA)
+    v = _ventana(raiz, cfg)
+    d = v.ver_decididas()
+    try:
+        assert len(d.tabla.get_children()) == 3
+        d.filtro.set("Confirmada")
+        d.recargar()
+        assert set(d.tabla.get_children()) == {str(i) for i in confirmadas}
+        d.tabla.selection_set(str(confirmadas[0]))
+        d.tabla.event_generate("<<TreeviewSelect>>")
+        raiz.update()
+        assert "Pendiente → Confirmada" in d.etiqueta_historial.cget("text")
+        assert "(ventana)" in d.etiqueta_historial.cget("text")
+    finally:
+        d.ventana.destroy()
+
+
+def test_corregir_sin_seleccion_avisa_y_no_cambia_nada(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _decidir(cfg, _con_alertas(cfg, hoy=1))
+    v = _ventana(raiz, cfg)
+    d = v.ver_decididas()
+    try:
+        assert d.corregir(DESCARTADA) == 0
+        assert d.etiqueta_aviso.cget("text") == "Seleccione al menos una alerta."
+    finally:
+        d.ventana.destroy()
+
+
+def test_ver_decididas_dos_veces_no_apila_ventanas(raiz, tmp_path, monkeypatch):
+    v = _ventana(raiz, _cfg(tmp_path, monkeypatch))
+    d = v.ver_decididas()
+    try:
+        assert v.ver_decididas() is d
+    finally:
+        d.ventana.destroy()
+    assert v.ver_decididas() is not d
+    v.decididas.ventana.destroy()
+
+
+def test_corregir_con_la_base_ocupada_avisa(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    _decidir(cfg, ids)
+    v = _ventana(raiz, cfg)
+    d = v.ver_decididas()
+    try:
+        d.tabla.selection_set(str(ids[0]))
+
+        def ocupada(*a):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(v, "_decidir", ocupada)
+        assert d.corregir(DESCARTADA) == 0
+        assert "ocupada" in d.etiqueta_aviso.cget("text")
+    finally:
+        d.ventana.destroy()
