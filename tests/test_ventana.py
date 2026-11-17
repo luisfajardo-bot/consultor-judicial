@@ -700,3 +700,129 @@ def test_los_dialogos_de_cierre_por_defecto_tienen_los_botones_del_spec(raiz, tm
     assert [b.cget("text") for b in botones] == ["Volver a revisar"]
     botones[0].invoke()
     assert resultado["cerrar"] is False
+
+
+def _base_rota(monkeypatch):
+    def rota(self):
+        raise sqlite3.DatabaseError("file is not a database")
+
+    monkeypatch.setattr(Store, "alertas_pendientes", rota)
+
+
+def test_si_la_base_falla_al_abrir_la_ventana_abre_avisa_y_reintenta(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    with monkeypatch.context() as m:
+        _base_rota(m)
+        v = _ventana(raiz, cfg)
+        assert v.etiqueta_estado.cget("text") == "No se pudo actualizar la pantalla (DatabaseError). Avise a Sistemas."
+        v.sondear()  # sigue fallando: el aviso queda
+        assert "Avise a Sistemas" in v.etiqueta_estado.cget("text")
+    v.sondear()  # la base se recuperó: se carga la lista y se quita el aviso
+    assert v.tabla_rango.get_children() == (str(ids[0]),)
+    assert v.etiqueta_estado.cget("text") == ""
+
+
+def test_si_la_base_falla_al_cerrar_se_usa_lo_ultimo_leido(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=3)
+    v, cerradas, _, preguntas = _cerrar_ventana(raiz, cfg)
+    _base_rota(monkeypatch)
+    assert v.al_cerrar() == "cerrada" and cerradas
+    assert preguntas == ["Quedan 3 alertas por decidir de los últimos 7 días. ¿Cerrar de todas formas?"]
+
+
+def test_si_la_base_nunca_se_pudo_leer_al_cerrar_se_pregunta_sin_trabar(raiz, tmp_path, monkeypatch):
+    from consultor.panel import TEXTO_CIERRE_SIN_LISTA
+
+    cfg = _cfg(tmp_path, monkeypatch)
+    _base_rota(monkeypatch)
+    cerradas, preguntas = [], []
+    v = _ventana(
+        raiz,
+        cfg,
+        preguntar=lambda t, x: preguntas.append(x) or True,
+        informar=lambda t, x: pytest.fail("no debe bloquear"),
+        cerrar=lambda: cerradas.append(1),
+    )
+    assert v.al_cerrar() == "cerrada" and cerradas
+    assert preguntas == [TEXTO_CIERRE_SIN_LISTA]
+
+
+def test_sondear_recarga_si_otra_consulta_reanuda_y_cierra_el_mismo_ciclo(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    store = Store(cfg["salida"]["base_datos"])
+    try:
+        ciclo = store.iniciar_ciclo(datetime.combine(HOY, time(11, 0)))
+        store.cerrar_ciclo(ciclo, "Pausado", datetime.combine(HOY, time(11, 5)))
+        v = _ventana(raiz, cfg)
+        v.sondear()
+        v.sondear()
+        momento = datetime.combine(HOY, time(11, 10))
+        assert store.iniciar_ciclo(momento) == ciclo  # se reanuda el mismo ciclo, como ejecutar_ahora.bat
+        nueva = act(next(_ACTUACIONES), fecha="2026-11-12", texto="Auto", anotacion="")
+        store.registrar_resultado(ciclo, RADICADO, ok(nueva), Veredicto(POSIBLE_NOVEDAD, nuevas=(nueva,)), "", momento)
+        store.cerrar_ciclo(ciclo, "Completo", datetime.combine(HOY, time(11, 20)))
+    finally:
+        store.con.close()
+    v.sondear()
+    assert len(v.tabla_rango.get_children()) == 2 and str(ids[0]) in v.tabla_rango.get_children()
+
+
+def test_al_cambiar_el_dia_sondear_recarga_las_pestanas(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    dia = [HOY]
+    v = Ventana(raiz, cfg, hoy=lambda: dia[0])
+    v.raiz.after = lambda ms, fn: None
+    v.sondear()
+    assert v.tabla_rango.get_children() == (str(ids[0]),)
+    dia[0] = HOY + timedelta(days=8)  # la ventana quedó abierta: pasada la medianoche la alerta sale del rango
+    v.sondear()
+    assert v.tabla_rango.get_children() == () and v.tabla_anteriores.get_children() == (str(ids[0]),)
+
+
+def test_recargar_solo_escribe_la_obligacion_cuando_cambia(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    escrituras = []
+    real = Store.fijar_obligacion
+    monkeypatch.setattr(Store, "fijar_obligacion", lambda self, activa: escrituras.append(activa) or real(self, activa))
+    _con_alertas(cfg, hace_20_dias=44)
+    v = _ventana(raiz, cfg)
+    v.recargar_alertas()
+    assert escrituras == []  # regla apagada: nada que guardar
+    _con_regla(cfg)
+    v2 = _ventana(raiz, cfg)
+    v2.recargar_alertas()
+    v2.recargar_alertas()
+    assert escrituras == [True] and v2.obligacion
+
+
+def test_cerrar_ver_decididas_con_la_x_la_destruye_en_python(raiz, tmp_path, monkeypatch):
+    v = _ventana(raiz, _cfg(tmp_path, monkeypatch))
+    d = v.ver_decididas()
+    nombre = d.ventana.winfo_name()
+    comando = d.ventana.protocol("WM_DELETE_WINDOW")
+    assert comando, "la X debe tener su manejador"
+    d.ventana.tk.call(comando)
+    assert nombre not in raiz.children
+    assert v.ver_decididas() is not d
+    v.decididas.ventana.destroy()
+
+
+def test_una_ventana_destruida_se_libera_sin_esperar_al_recolector(raiz, tmp_path, monkeypatch):
+    import gc
+    import weakref
+
+    cfg = _cfg(tmp_path, monkeypatch)
+    marco = tk.Toplevel(raiz)
+    v = _ventana(marco, cfg)
+    ref = weakref.ref(v)
+    gc.disable()  # sin ciclos de referencias, la ventana se libera en este hilo y no en otro
+    try:
+        marco.destroy()
+        del v
+        assert ref() is None
+    finally:
+        gc.enable()

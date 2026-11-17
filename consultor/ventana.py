@@ -14,6 +14,7 @@ from .main import Ejecucion, cargar_config, ejecutar_ciclo
 from .models import CONFIRMADA, DESCARTADA, PENDIENTE
 from .panel import (
     accion_al_cerrar,
+    clave_recarga,
     config_alertas,
     contar_para_regla,
     evaluar_obligacion,
@@ -24,6 +25,7 @@ from .panel import (
     texto_avance,
     texto_confirmar_bloque,
     texto_dias_guardado,
+    texto_error_pantalla,
     texto_obligacion,
     texto_pestana_anteriores,
     texto_pestana_rango,
@@ -99,13 +101,15 @@ class Ventana:
         self.obligacion = False  # última obligación conocida; si la base está ocupada se conserva
         self.en_rango = self.anteriores_regla = 0
         self.preguntar = preguntar or messagebox.askyesno
-        self.informar = informar or self._aviso_cierre
-        self._preguntar_cierre = preguntar or self._pregunta_cierre
+        # sin métodos propios guardados en self: el ciclo de referencias haría que la ventana muerta
+        # (y sus StringVar) la libere el recolector en cualquier hilo
+        self.informar, self._preguntar_inyectado = informar, preguntar
         self.marcadas: set[int] = set()
         self.decididas = None  # la VentanaDecididas abierta, si hay una
         self._alertas: dict[int, dict] = {}
-        self.ciclo_recargado = SIN_CARGAR  # último ciclo terminado cuando se cargó la lista
-        self.ultimo_ciclo_id = None  # último ciclo terminado que vio refrescar()
+        self.ciclo_recargado = SIN_CARGAR  # clave_recarga() cuando se cargó la lista
+        self.clave_actual = None  # clave_recarga() que vio refrescar()
+        self.lista_leida = False  # la lista se leyó al menos una vez
         self._error_pantalla = False
         self.confirmar = confirmar or (
             lambda: messagebox.askyesno(
@@ -169,7 +173,7 @@ class Ventana:
         self.etiqueta_ajuste.pack(anchor="w", fill="x")
 
         self._crear_alertas(marco)
-        self.recargar_alertas()
+        self._recargar_sin_romper()  # si la base falla, la ventana abre igual con el aviso y sondear() reintenta
 
     # alertas por decidir
     def _crear_alertas(self, marco):
@@ -251,17 +255,22 @@ class Ventana:
                 pendientes = store.alertas_pendientes()
                 ciclo = store.ultimo_ciclo()
                 anteriores_regla = contar_para_regla(pendientes, self.hoy(), self.config_alertas)
-                activa = evaluar_obligacion(store.obligacion_activa() or self.obligacion, anteriores_regla, self.config_alertas)
-                try:
-                    store.fijar_obligacion(activa)
-                except sqlite3.OperationalError:
-                    pass  # base ocupada: rige el estado calculado y self.obligacion lo recuerda hasta poder guardarlo
+                guardada = store.obligacion_activa()
+                activa = evaluar_obligacion(guardada or self.obligacion, anteriores_regla, self.config_alertas)
+                if activa != guardada:  # solo se escribe si cambia: recargar no debe pedir la base para escribir
+                    try:
+                        store.fijar_obligacion(activa)
+                    except sqlite3.OperationalError:
+                        pass  # base ocupada: rige lo calculado y self.obligacion lo recuerda hasta poder guardarlo
             finally:
                 store.con.close()
         except sqlite3.OperationalError:
             self.ciclo_recargado = SIN_CARGAR  # base ocupada: se deja la lista como está y se reintenta
             return
-        self.ciclo_recargado = self.ultimo_ciclo_id = ciclo["id"] if ciclo else None
+        self.ciclo_recargado = self.clave_actual = (
+            clave_recarga(self.hoy(), ciclo["id"], ciclo["fin"], ciclo["estado"]) if ciclo else clave_recarga(self.hoy())
+        )
+        self.lista_leida = True
         dias = self._dias_guardados()
         en_rango, anteriores = separar(pendientes, self.hoy(), dias)
         self.en_rango, self.anteriores_regla = len(en_rango), anteriores_regla
@@ -321,21 +330,43 @@ class Ventana:
         return resultado["cerrar"]
 
     def _pregunta_cierre(self, titulo, texto) -> bool:
+        if self._preguntar_inyectado is not None:
+            return self._preguntar_inyectado(titulo, texto)
         return self._mostrar_dialogo_cierre(titulo, texto, True)
 
     def _aviso_cierre(self, titulo, texto) -> None:
-        self._mostrar_dialogo_cierre(titulo, texto, False)
+        if self.informar is not None:
+            self.informar(titulo, texto)
+        else:
+            self._mostrar_dialogo_cierre(titulo, texto, False)
+
+    def _avisar_error_pantalla(self, error: BaseException) -> None:
+        self._error_pantalla = True
+        self.etiqueta_estado.config(text=texto_error_pantalla(error), fg=ROJO)
+
+    def _recargar_sin_romper(self) -> None:
+        """Recarga; si la base o la configuración fallan, avisa y deja que sondear() reintente."""
+        try:
+            self.recargar_alertas()
+        except Exception as e:  # la ventana debe abrir y cerrar aunque la base esté dañada
+            self.ciclo_recargado = SIN_CARGAR
+            self._avisar_error_pantalla(e)
 
     def al_cerrar(self) -> str:
         """Devuelve "cerrada", "bloqueada" o "cancelada". Con una consulta en curso rige lo mismo (spec 5.6)."""
-        self.recargar_alertas()  # si la base está ocupada se usa lo último leído
+        self._recargar_sin_romper()  # si la base falla o está ocupada se usa lo último leído
         accion = accion_al_cerrar(
-            self.obligacion, self.anteriores_regla, self.en_rango, self._dias_guardados(), self.config_alertas
+            self.obligacion,
+            self.anteriores_regla,
+            self.en_rango,
+            self._dias_guardados(),
+            self.config_alertas,
+            lista_leida=self.lista_leida,
         )
         if accion.tipo == "bloquear":
-            self.informar("Alertas sin decidir", accion.texto)
+            self._aviso_cierre("Alertas sin decidir", accion.texto)
             return "bloqueada"
-        if accion.tipo == "preguntar" and not self._preguntar_cierre("Alertas sin decidir", accion.texto):
+        if accion.tipo == "preguntar" and not self._pregunta_cierre("Alertas sin decidir", accion.texto):
             return "cancelada"
         self.cerrar()
         return "cerrada"
@@ -507,7 +538,11 @@ class Ventana:
                     try:
                         resumen = resumen_ultimo_ciclo(store)
                         self.texto_resumen_actual = texto_resumen(resumen)
-                        self.ultimo_ciclo_id = resumen.id if resumen else None
+                        self.clave_actual = (
+                            clave_recarga(self.hoy(), resumen.id, resumen.fin, resumen.estado)
+                            if resumen
+                            else clave_recarga(self.hoy())
+                        )
                     finally:
                         store.con.close()
                 except sqlite3.OperationalError:
@@ -544,16 +579,14 @@ class Ventana:
             self.recargar_alertas()
         try:
             self.refrescar()
-            if self.ultimo_ciclo_id != self.ciclo_recargado:  # terminó otra consulta
+            # terminó otra consulta (o se reanudó y cerró la misma), o cambió el día
+            if self.clave_actual != self.ciclo_recargado:
                 self.recargar_alertas()
             if self._error_pantalla:  # el refresco se recuperó: quitar el aviso
                 self._error_pantalla = False
                 self.etiqueta_estado.config(text="")
         except Exception as e:  # la pantalla debe seguir viva aunque la base o la carpeta fallen
-            self._error_pantalla = True
-            self.etiqueta_estado.config(
-                text=f"No se pudo actualizar la pantalla ({type(e).__name__}). Avise a Sistemas.", fg=ROJO
-            )
+            self._avisar_error_pantalla(e)
         finally:
             self.raiz.after(1000, self.sondear)
 
@@ -582,6 +615,7 @@ class VentanaDecididas:
         self.principal = principal
         self.ventana = tk.Toplevel(principal.raiz)
         self.ventana.title("Alertas decididas")
+        self.ventana.protocol("WM_DELETE_WINDOW", self.ventana.destroy)  # la X destruye también el objeto de Python
         marco = ttk.Frame(self.ventana, padding=12)
         marco.pack(fill="both", expand=True)
 

@@ -509,3 +509,19 @@ def test_alertas_decididas_filtra_por_estado(store):
     store.decidir([b], DESCARTADA, "Alisson", AHORA)
     assert [x["id"] for x in store.alertas_decididas(CONFIRMADA)] == [a]
     assert len(store.alertas_decididas()) == 2
+
+
+def test_abrir_una_base_ya_migrada_no_pide_escribir(tmp_path):
+    import sqlite3
+
+    ruta = tmp_path / "c.db"
+    s = Store(ruta)
+    _con_novedad(s)
+    s.con.close()
+    otra = sqlite3.connect(ruta)
+    otra.execute("BEGIN IMMEDIATE")  # una consulta tiene la base para escribir
+    try:
+        Store(ruta).con.close()  # no espera ni falla: abrir solo lee
+    finally:
+        otra.rollback()
+        otra.close()

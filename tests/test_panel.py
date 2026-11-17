@@ -2,12 +2,16 @@ import os
 import time
 from datetime import date, datetime, timedelta
 
+import pytest
+
 from consultor.bloqueo import Bloqueo
 from consultor.models import SIN_CAMBIO, Radicado, Veredicto
 from consultor.panel import (
+    TEXTO_CIERRE_SIN_LISTA,
     Avance,
     ConfigAlertas,
     accion_al_cerrar,
+    clave_recarga,
     config_alertas,
     contar_para_regla,
     evaluar_obligacion,
@@ -25,6 +29,7 @@ from consultor.store import Store
 from tests.utiles import act, ok
 
 AHORA = datetime(2026, 10, 12, 9, 0, 0)
+HOY_PANEL = date(2026, 11, 13)
 
 
 def leer_avance_falso(hecho, total, segundos):
@@ -145,3 +150,50 @@ def test_textos_de_pestanas_y_guardado():
     assert texto_pestana_rango(7, 5) == "Por decidir · últimos 7 días (5)"
     assert texto_pestana_rango(0, 2) == "Por decidir · hoy (2)"
     assert texto_dias_guardado(0).startswith("Guardado: 0 días. No se avisará nada")
+
+
+def test_cerrar_con_cero_dias_dice_de_hoy():
+    a = accion_al_cerrar(False, 0, 2, 0, ConfigAlertas())
+    assert a.texto == "Quedan 2 alertas por decidir de hoy. ¿Cerrar de todas formas?"
+
+
+def test_sin_haber_leido_la_lista_al_cerrar_se_pregunta():
+    a = accion_al_cerrar(False, 0, 0, 7, ConfigAlertas(), lista_leida=False)
+    assert a.tipo == "preguntar" and a.texto == TEXTO_CIERRE_SIN_LISTA
+    assert accion_al_cerrar(True, 44, 0, 7, ConfigAlertas(exigir=True), lista_leida=False).tipo == "bloquear"
+
+
+def test_config_alertas_convierte_tipos():
+    c = config_alertas(
+        {"alertas": {"exigir_puesta_al_dia": True, "umbral_anteriores": "40", "objetivo_anteriores": 5.0,
+                     "dias_corte_regla": "3"}}
+    )
+    assert c == ConfigAlertas(True, 40, 5, 3)
+
+
+@pytest.mark.parametrize(
+    "alertas, esperado",
+    [
+        ({"umbral_anteriores": "treinta"}, ConfigAlertas()),
+        ({"umbral_anteriores": -1}, ConfigAlertas()),
+        ({"dias_corte_regla": -3, "umbral_anteriores": 50}, ConfigAlertas(umbral=50)),
+        ({"dias_corte_regla": 2.5}, ConfigAlertas()),
+        ({"objetivo_anteriores": 40}, ConfigAlertas()),  # objetivo > umbral: los dos por defecto
+        ({"umbral_anteriores": 5, "objetivo_anteriores": 8}, ConfigAlertas()),
+        ({"umbral_anteriores": True}, ConfigAlertas()),
+        ({"exigir_puesta_al_dia": "false"}, ConfigAlertas()),
+        ({"exigir_puesta_al_dia": 1}, ConfigAlertas()),
+        ({"umbral_anteriores": None, "exigir_puesta_al_dia": True}, ConfigAlertas(exigir=True)),
+    ],
+)
+def test_config_alertas_invalida_vuelve_al_valor_por_defecto(alertas, esperado):
+    assert config_alertas({"alertas": alertas}) == esperado
+
+
+def test_la_clave_de_recarga_cambia_con_el_cierre_el_estado_o_el_dia():
+    fin = datetime(2026, 11, 13, 9, 0)
+    base = clave_recarga(HOY_PANEL, 4, fin, "Pausado")
+    assert base == clave_recarga(HOY_PANEL, 4, fin, "Pausado")
+    assert base != clave_recarga(HOY_PANEL, 4, fin + timedelta(hours=1), "Completo")
+    assert base != clave_recarga(HOY_PANEL, 4, fin, "Completo")
+    assert base != clave_recarga(HOY_PANEL + timedelta(days=1), 4, fin, "Pausado")

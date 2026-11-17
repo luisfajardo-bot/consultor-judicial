@@ -100,15 +100,39 @@ class ConfigAlertas:
     dias_corte: int = 7
 
 
+def _entero(valor, defecto: int) -> int:
+    """Entero >= 0 (también "30" o 30.0); cualquier otra cosa vale el defecto."""
+    if isinstance(valor, bool):
+        return defecto
+    try:
+        n = int(valor)
+    except (TypeError, ValueError):
+        return defecto
+    if isinstance(valor, float) and valor != n:
+        return defecto
+    return n if n >= 0 else defecto
+
+
 def config_alertas(cfg: dict) -> ConfigAlertas:
+    """Lee [alertas]; un valor mal escrito vale lo de por defecto en vez de romper la ventana."""
     a = cfg.get("alertas", {})
     base = ConfigAlertas()
+    exigir = a.get("exigir_puesta_al_dia", base.exigir)
+    umbral = _entero(a.get("umbral_anteriores", base.umbral), base.umbral)
+    objetivo = _entero(a.get("objetivo_anteriores", base.objetivo), base.objetivo)
+    if objetivo > umbral:  # no se sabe cuál de los dos está mal: rigen los dos por defecto
+        umbral, objetivo = base.umbral, base.objetivo
     return ConfigAlertas(
-        exigir=a.get("exigir_puesta_al_dia", base.exigir),
-        umbral=a.get("umbral_anteriores", base.umbral),
-        objetivo=a.get("objetivo_anteriores", base.objetivo),
-        dias_corte=a.get("dias_corte_regla", base.dias_corte),
+        exigir=exigir if isinstance(exigir, bool) else base.exigir,
+        umbral=umbral,
+        objetivo=objetivo,
+        dias_corte=_entero(a.get("dias_corte_regla", base.dias_corte), base.dias_corte),
     )
+
+
+def clave_recarga(hoy: date, ciclo_id=None, fin=None, estado=None) -> tuple:
+    """Lo que obliga a recargar la lista: otro ciclo, el mismo ciclo reanudado y vuelto a cerrar, o un día nuevo."""
+    return (hoy, ciclo_id, fin, estado)
 
 
 def separar(pendientes: list[dict], hoy: date, dias: int) -> tuple[list[dict], list[dict]]:
@@ -139,17 +163,30 @@ class AccionCierre:
     texto: str = ""
 
 
+TEXTO_CIERRE_SIN_LISTA = "No se pudo leer la lista de alertas. ¿Cerrar de todas formas?"
+
+
 def accion_al_cerrar(
-    obligacion: bool, anteriores_regla: int, en_rango: int, dias: int, c: ConfigAlertas
+    obligacion: bool,
+    anteriores_regla: int,
+    en_rango: int,
+    dias: int,
+    c: ConfigAlertas,
+    lista_leida: bool = True,
 ) -> AccionCierre:
+    """lista_leida=False: la ventana nunca pudo leer la base; se pregunta en vez de cerrar sin más o de trabarse."""
     if obligacion:
         return AccionCierre("bloquear", texto_obligacion(anteriores_regla, c))
+    if not lista_leida:
+        return AccionCierre("preguntar", TEXTO_CIERRE_SIN_LISTA)
     if en_rango > 0:
-        return AccionCierre(
-            "preguntar",
-            f"Quedan {en_rango} alertas por decidir de los últimos {dias} días. ¿Cerrar de todas formas?",
-        )
+        rango = "de hoy" if dias == 0 else f"de los últimos {dias} días"
+        return AccionCierre("preguntar", f"Quedan {en_rango} alertas por decidir {rango}. ¿Cerrar de todas formas?")
     return AccionCierre("cerrar")
+
+
+def texto_error_pantalla(error: BaseException) -> str:
+    return f"No se pudo actualizar la pantalla ({type(error).__name__}). Avise a Sistemas."
 
 
 def texto_pestana_rango(dias: int, n: int) -> str:

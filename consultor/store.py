@@ -147,15 +147,21 @@ class Store:
         if "parcial" not in {f["name"] for f in self.con.execute("PRAGMA table_info(ciclo)")}:
             with self.con:
                 self.con.execute("ALTER TABLE ciclo ADD COLUMN parcial INTEGER NOT NULL DEFAULT 0")
-        with self.con:  # alertas ya decididas antes del historial: una fila cada una, una sola vez
-            self.con.execute(
-                "INSERT INTO decision (alerta_id, estado_anterior, estado_nuevo, usuario, momento, origen) "
-                "SELECT a.id, ?, a.estado, COALESCE(a.validada_por, ''), "
-                "COALESCE(a.validada_en, c.inicio), ? "
-                "FROM alerta a JOIN ciclo c ON c.id = a.ciclo_id "
-                "WHERE a.estado <> ? AND NOT EXISTS (SELECT 1 FROM decision d WHERE d.alerta_id = a.id)",
-                (PENDIENTE, ORIGEN_MIGRACION, PENDIENTE),
-            )
+        sin_historial = self.con.execute(  # solo lee: abrir la base no espera a una consulta que escribe
+            "SELECT EXISTS (SELECT 1 FROM alerta a JOIN ciclo c ON c.id = a.ciclo_id WHERE a.estado <> ? "
+            "AND NOT EXISTS (SELECT 1 FROM decision d WHERE d.alerta_id = a.id))",
+            (PENDIENTE,),
+        ).fetchone()[0]
+        if sin_historial:  # alertas ya decididas antes del historial: una fila cada una, una sola vez
+            with self.con:
+                self.con.execute(
+                    "INSERT INTO decision (alerta_id, estado_anterior, estado_nuevo, usuario, momento, origen) "
+                    "SELECT a.id, ?, a.estado, COALESCE(a.validada_por, ''), "
+                    "COALESCE(a.validada_en, c.inicio), ? "
+                    "FROM alerta a JOIN ciclo c ON c.id = a.ciclo_id "
+                    "WHERE a.estado <> ? AND NOT EXISTS (SELECT 1 FROM decision d WHERE d.alerta_id = a.id)",
+                    (PENDIENTE, ORIGEN_MIGRACION, PENDIENTE),
+                )
 
     # ciclos
     def iniciar_ciclo(self, ahora: datetime, parcial: bool = False) -> int:
