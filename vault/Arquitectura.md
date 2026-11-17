@@ -30,10 +30,10 @@ flowchart LR
 2. Lee las decisiones de Alisson de los reportes anteriores y las guarda con `registrar_decision`.
 3. Marca como Interrumpidos los ciclos abiertos de días anteriores.
 4. [[loader]] entrega la lista de radicados.
-5. [[fetcher]] consulta cada uno, sin repetir los ya consultados en este ciclo (así se reanuda).
+5. [[fetcher]] consulta cada uno, sin repetir los ya consultados con éxito en este ciclo (así se reanuda; lo fallido se reintenta y su fila se reemplaza).
 6. [[comparator]] clasifica: POSIBLE NOVEDAD, SIN CAMBIO o NO VERIFICADO.
 7. [[store]] guarda actuaciones, consulta y alertas en una sola transacción.
-8. Si el portal bloquea, el ciclo se pausa y continúa en la siguiente ejecución. Si fallan demasiadas consultas, espera 10 min y reintenta lo fallido (hasta 2 veces); si sigue igual, se detiene (R5).
+8. Si el portal bloquea, el ciclo se pausa y continúa en la siguiente ejecución. Si el portal no responde (5 fallas seguidas o R5), espera 15 y luego 30 min y reintenta lo fallido; si sigue igual, el ciclo se pausa y se reanuda el mismo día. Ver el protocolo en el README.
 9. [[reporter]] escribe el reporte **antes** de cerrar el ciclo.
 10. [[mantenimiento]] archiva reportes viejos y respalda la base.
 

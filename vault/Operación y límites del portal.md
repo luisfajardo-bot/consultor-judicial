@@ -46,9 +46,11 @@ Resultado real: ciclo de 41 radicados en 1 a 8 minutos según cuánto frene el p
 
 | Mensaje | Qué significa | Qué hacer |
 |---|---|---|
-| ALERTA: el portal bloqueó las consultas | Cuota del portal agotada | Esperar el tiempo indicado y volver a lanzar |
+| ALERTA: el portal bloqueó las consultas | Cuota del portal agotada aun después de esperar | Protocolo del README: reintentar en 1 hora; si falla, consulta manual y avisar a Luis |
+| El portal no responde (ciclo Pausado) | Caída del portal aun después de esperar 15 + 30 min | Igual: reintentar en 1 hora el mismo día; si falla, consulta manual y avisar a Luis |
+| ... revisar el radicado en el portal | El portal no tiene ese proceso o sus actuaciones | Buscarlo a mano; si el número está mal, corregir el Excel |
 | ALERTA: la API posiblemente cambió | Respuestas con forma inesperada | Volver a la consulta manual y avisar a quien mantiene la herramienta |
-| Fuente no disponible | Fallan demasiadas consultas | Consulta manual, ver [[Validación humana]] |
+| Fuente no disponible (Detenido) | Fallan demasiadas consultas por un cambio de la API | Consulta manual, ver [[Validación humana]] |
 | Lista vacía | La fuente no devolvió radicados | Revisar el Excel y el filtro de estado |
 
 ## Base de datos

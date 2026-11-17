@@ -119,7 +119,7 @@ def config_alertas(cfg: dict) -> ConfigAlertas:
     base = ConfigAlertas()
     exigir = a.get("exigir_puesta_al_dia", base.exigir)
     umbral = _entero(a.get("umbral_anteriores", base.umbral), base.umbral)
-    objetivo = _entero(a.get("objetivo_anteriores", base.objetivo), base.objetivo)
+    objetivo = _entero(a.get("objetivo_anteriores", base.objetivo), base.objetivo) or base.objetivo  # 0: "menos de 0" nunca se cumple
     if objetivo > umbral:  # no se sabe cuál de los dos está mal: rigen los dos por defecto
         umbral, objetivo = base.umbral, base.objetivo
     return ConfigAlertas(

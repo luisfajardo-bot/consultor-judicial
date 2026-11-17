@@ -440,7 +440,7 @@ class Ventana:
             self.etiqueta_alertas.config(text=BASE_OCUPADA, fg=ROJO)
             return 0
         self.marcadas -= set(ids)
-        self.recargar_alertas()
+        self._recargar_sin_romper()
         return cambiadas
 
     def _decidir(self, ids, estado) -> int:
@@ -507,7 +507,7 @@ class Ventana:
             return
         self.dias.set(str(dias))
         self.etiqueta_ajuste.config(text=texto_dias_guardado(dias), fg=VERDE)
-        self.recargar_alertas()
+        self._recargar_sin_romper()
 
     def alternar_encendido(self):
         guardar_activas(self.carpeta_datos, not consultas_activas(self.carpeta_datos))
@@ -576,7 +576,7 @@ class Ventana:
             except queue.Empty:
                 break
             self._mostrar(e)
-            self.recargar_alertas()
+            self._recargar_sin_romper()
         try:
             self.refrescar()
             # terminó otra consulta (o se reanudó y cerró la misma), o cambió el día
@@ -598,7 +598,7 @@ class Ventana:
         elif e.codigo == 2:
             self.etiqueta_estado.config(text="La consulta falló con un error inesperado. Ver avisos.log.", fg=ROJO)
         else:
-            self.etiqueta_estado.config(text="La consulta terminó con avisos. Revisa el reporte.", fg=ROJO)
+            self.etiqueta_estado.config(text=e.mensaje or "La consulta terminó con avisos. Revisa el reporte.", fg=ROJO)
 
     def abrir_reporte(self):
         ruta = ultimo_reporte(self.carpeta_reportes)
@@ -718,7 +718,7 @@ class VentanaDecididas:
             return 0
         self.etiqueta_aviso.config(text="")
         self.recargar()
-        self.principal.recargar_alertas()
+        self.principal._recargar_sin_romper()
         return cambiadas
 
 

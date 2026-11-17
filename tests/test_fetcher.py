@@ -115,14 +115,15 @@ def test_siempre_pide_solo_activos_false():
     assert params["numero"] == RAD.radicado
 
 
-def test_busqueda_vacia_es_sin_resultados_y_cuenta_para_r5():
+@pytest.mark.parametrize("respuesta", [RespuestaFalsa(200, {"procesos": []}), RespuestaFalsa(404, {})])
+def test_busqueda_sin_resultados_es_del_radicado_no_caida(respuesta):
     rutas = rutas_ok()
-    rutas["NumeroRadicacion"] = RespuestaFalsa(200, {"procesos": []})
+    rutas["NumeroRadicacion"] = respuesta
     f, _, _ = crear(rutas)
     c = f.consultar(RAD)
     assert c.estado == FALLIDA
-    assert c.motivo == "sin resultados"
-    assert c.falla_portal is True
+    assert c.motivo == "sin resultados: revisar el radicado en el portal"
+    assert (c.falla_portal, c.no_hallado) == (False, True)
 
 
 def test_radicado_invalido_no_llama_al_portal():
@@ -201,17 +202,19 @@ def test_la_sesion_por_defecto_se_identifica_y_no_usa_el_user_agent_de_requests(
     assert not USER_AGENT.startswith("python-requests")
 
 
-def test_404_sin_el_mensaje_esperado_es_falla_del_portal():
+def test_404_con_json_sin_el_mensaje_esperado_es_del_radicado_y_nunca_exitosa():
     rutas = rutas_ok()
     rutas["Actuaciones"] = RespuestaFalsa(404, {"StatusCode": 404, "Message": "Otra cosa"})
     f, _, _ = crear(rutas)
     c = f.consultar(RAD)
-    assert c.estado == FALLIDA and c.falla_portal is True
+    assert c.estado == FALLIDA and c.motivo.startswith("404 inesperado al pedir actuaciones")
+    assert (c.falla_portal, c.no_hallado) == (False, True)
 
 
-def test_404_con_cuerpo_ilegible_es_falla_del_portal():
+@pytest.mark.parametrize("ruta", ["Actuaciones", "NumeroRadicacion"])
+def test_404_con_cuerpo_ilegible_es_falla_del_portal(ruta):
     rutas = rutas_ok()
-    rutas["Actuaciones"] = RespuestaFalsa(404, json_invalido=True)
+    rutas[ruta] = RespuestaFalsa(404, json_invalido=True)
     f, _, _ = crear(rutas)
     c = f.consultar(RAD)
     assert c.estado == FALLIDA and c.falla_portal is True
@@ -308,6 +311,15 @@ def test_403_persistente_es_bloqueo_con_esperas_largas():
     assert c.motivo == "HTTP 403: el portal bloqueó las consultas"
     assert dormidos == [30.0, 60.0]
     assert len([u for u, _ in sesion.llamadas if "NumeroRadicacion" in u]) == 3
+
+
+def test_cada_espera_por_cuota_queda_registrada():
+    rutas = rutas_ok()
+    rutas["NumeroRadicacion"] = [RespuestaFalsa(429), RespuestaFalsa(200, BUSQUEDA)]
+    avisos = []
+    f, _, _ = crear_con(rutas, avisar=avisos.append)
+    assert f.consultar(RAD).estado == EXITOSA
+    assert avisos == ["El portal pidió esperar (HTTP 429): pausa de 30 s."]
 
 
 def test_403_que_se_recupera_devuelve_exito():

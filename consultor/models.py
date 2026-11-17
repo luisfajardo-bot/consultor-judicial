@@ -35,12 +35,14 @@ class Actuacion:
 
 @dataclass(frozen=True)
 class Consulta:
-    """Lo que devolvió el portal para un radicado. falla_portal cuenta para R5 (el portal falló o no devolvió el proceso)."""
+    """Lo que devolvió el portal para un radicado. falla_portal cuenta como caída del portal;
+    no_hallado (el portal respondió pero no tiene el proceso) no, porque es del radicado."""
 
     estado: str
     motivo: str = ""
     falla_portal: bool = False
     bloqueo: bool = False
+    no_hallado: bool = False
     id_proceso: int | None = None
     despacho: str = ""
     ultima_actualizacion: str = ""
