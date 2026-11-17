@@ -670,3 +670,33 @@ def test_con_el_aviso_rojo_visible_la_ventana_sigue_cabiendo_en_700_px(raiz, tmp
         assert raiz.winfo_reqheight() <= 700
     finally:
         raiz.tk.call("tk", "scaling", escala)
+
+
+def test_la_obligacion_no_se_libera_si_fallo_guardarla_con_la_base_ocupada(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    ids = _con_alertas(cfg, hace_20_dias=44)
+    real = Store.fijar_obligacion
+
+    def ocupada(self, activa):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Store, "fijar_obligacion", ocupada)
+    v, _, _, _ = _cerrar_ventana(raiz, cfg)
+    assert v.obligacion
+    monkeypatch.setattr(Store, "fijar_obligacion", real)
+    _decidir(cfg, ids[:20])  # quedan 24: entre objetivo y umbral, debe seguir activa
+    v.recargar_alertas()
+    assert v.obligacion and v.al_cerrar() == "bloqueada"
+
+
+def test_los_dialogos_de_cierre_por_defecto_tienen_los_botones_del_spec(raiz, tmp_path, monkeypatch):
+    v = _ventana(raiz, _cfg(tmp_path, monkeypatch))
+    d, botones, resultado = v.crear_dialogo_cierre("Alertas sin decidir", "texto", True)
+    assert [b.cget("text") for b in botones] == ["Volver a revisar", "Cerrar igual"]
+    botones[1].invoke()
+    assert resultado["cerrar"] is True
+    d, botones, resultado = v.crear_dialogo_cierre("Alertas sin decidir", "texto", False)
+    assert [b.cget("text") for b in botones] == ["Volver a revisar"]
+    botones[0].invoke()
+    assert resultado["cerrar"] is False

@@ -60,6 +60,8 @@ COLUMNAS_DECIDIDAS = (
     ("radicado", "Radicado", 150),
     ("actuacion", "Actuación", 260),
 )
+VOLVER_A_REVISAR = "Volver a revisar"
+CERRAR_IGUAL = "Cerrar igual"
 MARCADA, SIN_MARCAR = "☑", "☐"
 COLUMNAS = (
     ("marca", "", 32),
@@ -97,7 +99,8 @@ class Ventana:
         self.obligacion = False  # última obligación conocida; si la base está ocupada se conserva
         self.en_rango = self.anteriores_regla = 0
         self.preguntar = preguntar or messagebox.askyesno
-        self.informar = informar or messagebox.showwarning
+        self.informar = informar or self._aviso_cierre
+        self._preguntar_cierre = preguntar or self._pregunta_cierre
         self.marcadas: set[int] = set()
         self.decididas = None  # la VentanaDecididas abierta, si hay una
         self._alertas: dict[int, dict] = {}
@@ -248,11 +251,11 @@ class Ventana:
                 pendientes = store.alertas_pendientes()
                 ciclo = store.ultimo_ciclo()
                 anteriores_regla = contar_para_regla(pendientes, self.hoy(), self.config_alertas)
-                activa = evaluar_obligacion(store.obligacion_activa(), anteriores_regla, self.config_alertas)
+                activa = evaluar_obligacion(store.obligacion_activa() or self.obligacion, anteriores_regla, self.config_alertas)
                 try:
                     store.fijar_obligacion(activa)
                 except sqlite3.OperationalError:
-                    pass  # base ocupada: rige el estado calculado ahora; se vuelve a guardar en la próxima recarga
+                    pass  # base ocupada: rige el estado calculado y self.obligacion lo recuerda hasta poder guardarlo
             finally:
                 store.con.close()
         except sqlite3.OperationalError:
@@ -285,6 +288,44 @@ class Ventana:
         self.pestanas.tab(1, text=texto_pestana_anteriores(len(anteriores)))
         self._pintar_pestana()
 
+    def crear_dialogo_cierre(self, titulo: str, texto: str, con_cierre: bool):
+        """Diálogo modal con los botones del spec. Devuelve (ventana, botones, resultado)."""
+        d = tk.Toplevel(self.raiz)
+        d.title(titulo)
+        d.transient(self.raiz)
+        resultado = {"cerrar": False}
+        ttk.Label(d, text=texto, wraplength=460, justify="left").pack(padx=16, pady=(16, 8))
+        fila = ttk.Frame(d)
+        fila.pack(pady=(0, 16))
+
+        def terminar(cerrar):
+            resultado["cerrar"] = cerrar
+            d.destroy()
+
+        volver = ttk.Button(fila, text=VOLVER_A_REVISAR, command=lambda: terminar(False))
+        volver.pack(side="left", padx=4)
+        botones = [volver]
+        if con_cierre:
+            igual = ttk.Button(fila, text=CERRAR_IGUAL, command=lambda: terminar(True))
+            igual.pack(side="left", padx=4)
+            botones.append(igual)
+        volver.focus_set()
+        d.bind("<Escape>", lambda e: terminar(False))
+        d.protocol("WM_DELETE_WINDOW", lambda: terminar(False))
+        return d, botones, resultado
+
+    def _mostrar_dialogo_cierre(self, titulo, texto, con_cierre) -> bool:
+        d, _, resultado = self.crear_dialogo_cierre(titulo, texto, con_cierre)
+        d.grab_set()
+        d.wait_window()
+        return resultado["cerrar"]
+
+    def _pregunta_cierre(self, titulo, texto) -> bool:
+        return self._mostrar_dialogo_cierre(titulo, texto, True)
+
+    def _aviso_cierre(self, titulo, texto) -> None:
+        self._mostrar_dialogo_cierre(titulo, texto, False)
+
     def al_cerrar(self) -> str:
         """Devuelve "cerrada", "bloqueada" o "cancelada". Con una consulta en curso rige lo mismo (spec 5.6)."""
         self.recargar_alertas()  # si la base está ocupada se usa lo último leído
@@ -294,7 +335,7 @@ class Ventana:
         if accion.tipo == "bloquear":
             self.informar("Alertas sin decidir", accion.texto)
             return "bloqueada"
-        if accion.tipo == "preguntar" and not self.preguntar("Alertas sin decidir", accion.texto):
+        if accion.tipo == "preguntar" and not self._preguntar_cierre("Alertas sin decidir", accion.texto):
             return "cancelada"
         self.cerrar()
         return "cerrada"
