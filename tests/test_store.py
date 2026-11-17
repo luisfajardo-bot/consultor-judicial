@@ -14,7 +14,7 @@ from consultor.models import (
     Radicado,
     Veredicto,
 )
-from consultor.store import Store
+from consultor.store import EXCEL_APLICADA, EXCEL_IGNORADA, EXCEL_SIN_EFECTO, Store
 from tests.utiles import act, ok
 
 AHORA = datetime(2026, 10, 12, 7, 0, 0)
@@ -91,14 +91,30 @@ def test_novedad_crea_alerta_pendiente_con_sus_datos(store):
     assert f["empresa"] == "ICEIN"
 
 
-def test_decision_solo_desde_pendiente_y_se_conserva_la_primera(store):
-    c2 = _con_novedad(store)
-    alerta_id = store.filas_reporte(c2)[0]["alerta_id"]
-    assert store.registrar_decision(alerta_id, DESCARTADA, "Alisson", AHORA) is True
-    assert store.registrar_decision(alerta_id, CONFIRMADA, "Otra persona", AHORA) is False
+def test_excel_aplica_solo_sobre_pendiente(store):
+    c2 = _con_novedad(store); a = store.filas_reporte(c2)[0]["alerta_id"]
+    assert store.registrar_decision(a, DESCARTADA, "Alisson", AHORA) == EXCEL_APLICADA
+    assert store.registrar_decision(a, CONFIRMADA, "Otra", AHORA) == EXCEL_SIN_EFECTO
+    assert store.historial(a)[-1]["origen"] == "excel"
     f = store.filas_reporte(c2)[0]
     assert f["decision"] == DESCARTADA
     assert f["validada_por"] == "Alisson"
+
+
+def test_excel_viejo_no_pisa_una_vuelta_a_pendiente_hecha_en_la_ventana(store):
+    c2 = _con_novedad(store); a = store.filas_reporte(c2)[0]["alerta_id"]
+    store.decidir([a], CONFIRMADA, "Alisson", AHORA)
+    store.decidir([a], PENDIENTE, "Alisson", AHORA + timedelta(hours=1))
+    assert store.registrar_decision(a, DESCARTADA, "Alisson", AHORA + timedelta(hours=2),
+                                    fecha_reporte=AHORA) == EXCEL_IGNORADA
+    assert store.registrar_decision(a, DESCARTADA, "Alisson", AHORA + timedelta(hours=2),
+                                    fecha_reporte=AHORA + timedelta(hours=1, minutes=5)) == EXCEL_APLICADA
+
+
+def test_excel_sin_fecha_no_pisa_una_alerta_con_historial(store):
+    c2 = _con_novedad(store); a = store.filas_reporte(c2)[0]["alerta_id"]
+    store.decidir([a], CONFIRMADA, "Alisson", AHORA); store.decidir([a], PENDIENTE, "Alisson", AHORA)
+    assert store.registrar_decision(a, DESCARTADA, "Alisson", AHORA, fecha_reporte=None) == EXCEL_IGNORADA
 
 
 def test_decision_invalida_lanza_error(store):

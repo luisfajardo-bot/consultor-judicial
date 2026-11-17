@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS estado_app (
 ORIGEN_VENTANA = "ventana"
 ORIGEN_EXCEL = "excel"
 ORIGEN_MIGRACION = "migracion"
+
+EXCEL_APLICADA = "aplicada"
+EXCEL_IGNORADA = "ignorada"
+EXCEL_SIN_EFECTO = "sin_efecto"
 CLAVE_OBLIGACION = "obligacion_puesta_al_dia"
 
 CONSULTAS_SQL = """
@@ -352,18 +356,30 @@ class Store:
             )
 
     def registrar_decision(
-        self, alerta_id: int, estado: str, usuario: str, ahora: datetime
-    ) -> bool:
-        """Única puerta de escritura de decisiones. Solo cambia alertas Pendiente."""
+        self,
+        alerta_id: int,
+        estado: str,
+        usuario: str,
+        ahora: datetime,
+        fecha_reporte: datetime | None = None,
+    ) -> str:
+        """Ruta del Excel. Solo cambia alertas Pendiente, y un reporte no pisa lo que se
+        decidió después en la ventana: si hay historial, el reporte debe ser posterior."""
         if estado not in (CONFIRMADA, DESCARTADA):
             raise ValueError(f"decisión inválida: {estado!r}")
-        with self.con:
-            cur = self.con.execute(
-                "UPDATE alerta SET estado = ?, validada_por = ?, validada_en = ? "
-                "WHERE id = ? AND estado = ?",
-                (estado, usuario, _iso(ahora), alerta_id, PENDIENTE),
-            )
-        return cur.rowcount == 1
+        actual = self.con.execute("SELECT estado FROM alerta WHERE id = ?", (alerta_id,)).fetchone()
+        if actual is None or actual["estado"] != PENDIENTE:
+            return EXCEL_SIN_EFECTO
+        ultimo = self.con.execute(
+            "SELECT momento FROM decision WHERE alerta_id = ? ORDER BY id DESC LIMIT 1",
+            (alerta_id,),
+        ).fetchone()
+        if ultimo is not None and (
+            fecha_reporte is None or fecha_reporte <= datetime.fromisoformat(ultimo["momento"])
+        ):
+            return EXCEL_IGNORADA
+        self.decidir([alerta_id], estado, usuario, ahora, ORIGEN_EXCEL)
+        return EXCEL_APLICADA
 
     def decidir(
         self,

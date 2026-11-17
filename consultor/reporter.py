@@ -115,10 +115,21 @@ def escribir_reporte(filas, resumen: dict, carpeta, ciclo_id: int, ahora: dateti
     return ruta
 
 
-def leer_decisiones(carpeta, avisar_fn=None) -> list[tuple[int, str, str]]:
+def _fecha_del_reporte(wb) -> datetime | None:
+    """Fecha y hora de la fila "Fecha" de Resumen; None si falta o no se puede leer."""
+    try:
+        for f in wb["Resumen"].iter_rows(values_only=True):
+            if f and f[0] == "Fecha":
+                return datetime.strptime(str(f[1]), "%Y-%m-%d %H:%M")
+    except Exception:
+        pass
+    return None
+
+
+def leer_decisiones(carpeta, avisar_fn=None) -> list[tuple[int, str, str, datetime | None]]:
     """Lee las decisiones que Alisson marcó en los reportes anteriores.
 
-    Devuelve (alerta_id, decisión, validó). Un archivo ilegible (por ejemplo abierto
+    Devuelve (alerta_id, decisión, validó, fecha del reporte o None). Un archivo ilegible (por ejemplo abierto
     en Excel) se avisa y se reintenta en el ciclo siguiente.
     """
     decisiones = []
@@ -146,9 +157,10 @@ def leer_decisiones(carpeta, avisar_fn=None) -> list[tuple[int, str, str]]:
                             avisar_fn(f"ID de alerta inválido ({f[i_id]!r}) en {ruta.name}; fila ignorada.")
                         continue
                     de_este.append((alerta_id, f[i_dec], f[i_val] or ""))
+                fecha = _fecha_del_reporte(wb)
             finally:
                 wb.close()
-            decisiones.extend(de_este)  # solo si el archivo se leyó completo
+            decisiones.extend((*d, fecha) for d in de_este)  # solo si el archivo se leyó completo
         except Exception as e:  # un archivo dañado no puede detener el monitoreo
             if avisar_fn:
                 avisar_fn(
