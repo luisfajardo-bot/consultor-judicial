@@ -130,6 +130,7 @@ Avise a quien mantiene la herramienta para que la ajuste.
 
 - **Cuota del portal (HTTP 403 o 429).** El portal corta después de unas 60 a 70 peticiones. La herramienta espera 1, 2 y 4 minutos y sigue. Es normal y pasa en casi todos los ciclos. Cada espera queda anotada en `reportes\avisos.log` ("El portal pidió esperar").
 - **Portal caído (errores 502 o 503, sin conexión, sin respuesta).** Si fallan 5 consultas seguidas, o más de la mitad del ciclo, espera 15 minutos y reintenta lo que falló. Si sigue igual, espera 30 minutos más y reintenta otra vez. La ventana muestra "Sin avance hace N min" mientras espera: no hay que cerrarla.
+- **Fallas sueltas.** Si algunos radicados fallan sin que el portal se caiga del todo, al final del ciclo espera 5 minutos y los reintenta una vez. Lo que se recupera queda normal.
 - **Radicado que el portal no encuentra.** No cuenta como caída del portal. Sale como NO VERIFICADO con el motivo "... revisar el radicado en el portal".
 
 Si después de eso el portal sigue sin responder, o el bloqueo no se levanta, la herramienta se rinde. El ciclo queda **"Pausado: el portal no responde"** o **"Pausado: el portal bloqueó las consultas"**, y la ventana lo dice en rojo. El reporte trae lo consultado hasta ese momento, y la hoja Resumen dice cuántos radicados quedaron pendientes.
@@ -138,7 +139,8 @@ Si después de eso el portal sigue sin responder, o el bloqueo no se levanta, la
 
 1. Esperar 1 hora y volver a lanzar **Consultar ahora**. La herramienta sigue desde donde quedó, sin repetir lo ya consultado. Debe ser el mismo día: al día siguiente el ciclo pausado queda como Interrumpido y la consulta empieza de cero.
 2. Si vuelve a pausarse, hacer ese día la consulta manual en el portal de la Rama Judicial de los radicados que no aparecen en el reporte, y avisar a Luis Fajardo.
-3. Si un radicado sale con "revisar el radicado en el portal" en varios ciclos seguidos, buscarlo a mano en el portal. Si el número está mal, corregirlo en el Excel de radicados.
+3. Si el ciclo termina con el aviso "N radicado(s) no se pudieron consultar por fallas del portal, ni en el repaso final", esos salen como NO VERIFICADO en el reporte: consultarlos a mano, o volver a lanzar la consulta más tarde.
+4. Si un radicado sale con "revisar el radicado en el portal" en varios ciclos seguidos, buscarlo a mano en el portal. Si el número está mal, corregirlo en el Excel de radicados.
 
 Lo que hoy pasa con datos reales: el 14-oct el portal estuvo caído unos 35 minutos, y el 26-oct casi todo el día.
 

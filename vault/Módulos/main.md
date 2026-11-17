@@ -21,6 +21,7 @@
 4. **Portal caído:** 5 fallas seguidas (`FALLAS_SEGUIDAS`) o R5 (a partir de 10 consultas, más del 50 %). Espera 15 y 30 min (`ESPERAS_CAIDA`) y reintenta lo fallido. Si sigue, lo deja "Pausado: el portal no responde", reanudable el mismo día. Si la mayoría de las fallas son respuestas con forma inesperada (cambio de la API), no espera: se detiene.
 5. **Bloqueo del portal:** se detiene al primer bloqueo, no registra el radicado bloqueado ni los siguientes, avisa cuántos quedan y deja el ciclo Pausado.
 5b. Si más de la mitad de los radicados no aparecen en el portal, avisa posible cambio de la API.
+5c. **Repaso final:** si el ciclo terminó normal pero hubo fallas del portal sueltas, espera 5 min (`ESPERA_REPASO`) y reintenta una vez solo esas (no los inválidos ni los no hallados). Lo que siga fallando se avisa. El estado final se calcula con el último resultado de cada radicado, no con los contadores de la última pasada.
 6. **Cambio de API:** si alguna consulta devolvió forma inesperada, avisa "ALERTA: la API posiblemente cambió".
 7. Escribe el reporte **antes** de cerrar el ciclo, para que un fallo del reporte no cierre un ciclo sin que nadie vea sus alertas.
 8. Mantenimiento ([[mantenimiento]]). Un fallo ahí nunca cambia el código de salida.

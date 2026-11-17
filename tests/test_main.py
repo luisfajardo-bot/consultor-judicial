@@ -945,3 +945,54 @@ def test_una_caida_de_varios_dias_no_pierde_la_ventana_del_primer_intento(tmp_pa
     f = FetcherFalso({r.radicado: ok(act(n, fecha="2026-10-13", registro="2026-10-13")) for n, r in enumerate(rs, 1)})
     r = correr_ciclo(rs, f, store, tmp_path, "Alisson Rengifo", 0.5, [].append, reloj, alertar_primera_dias=7)
     assert r.novedades == 5
+
+
+class FetcherSecuencia(FetcherFalso):
+    """Cada radicado responde su lista en orden; la última respuesta se repite."""
+
+    def consultar(self, r):
+        self.llamadas.append(r.radicado)
+        lista = self.respuestas[r.radicado]
+        return lista.pop(0) if len(lista) > 1 else lista[0]
+
+
+def test_fallas_sueltas_se_recuperan_en_el_repaso_final(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 21)]
+    sueltas = {rs[2].radicado, rs[8].radicado, rs[14].radicado}
+    f = FetcherSecuencia({r.radicado: [CAIDA, ok(act(1))] if r.radicado in sueltas else [ok(act(1))] for r in rs})
+    avisos = []
+    res = correr(tmp_path, rs, f, Store(":memory:"), Reloj(), avisos)
+    assert (res.estado, res.exitosas, res.fallidas) == ("Completo", 20, 0)
+    assert f.esperas == [main_mod.ESPERA_REPASO]
+    assert f.llamadas[20:] == [rs[2].radicado, rs[8].radicado, rs[14].radicado]  # solo las fallidas
+    assert any("3 radicado(s) fallaron por el portal" in a for a in avisos)
+
+
+def test_si_siguen_fallando_tras_el_repaso_se_avisa_y_el_estado_mira_todo_el_ciclo(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 21)]
+    respuestas = {r.radicado: [ok(act(1))] for r in rs}
+    for n, k in enumerate((1, 3, 5, 7, 9, 11)):  # 6 sueltas; en el repaso 4 de 6 vuelven a fallar (más del 50 %)
+        respuestas[rs[k].radicado] = [CAIDA] if n in (0, 1, 3, 4) else [CAIDA, ok(act(1))]
+    avisos = []
+    res = correr(tmp_path, rs, FetcherSecuencia(respuestas), Store(":memory:"), Reloj(), avisos)
+    assert res.estado == "Completo"  # 4 de 20, no 4 de 6
+    assert (res.exitosas, res.fallidas) == (16, 4)
+    assert any("4 radicado(s) no se pudieron consultar" in a for a in avisos)
+
+
+def test_ni_los_no_hallados_ni_los_invalidos_entran_al_repaso(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 4)] + [Radicado("123")]
+    f = FetcherFalso({rs[0].radicado: NO_HALLADO, rs[1].radicado: ok(act(1)), rs[2].radicado: ok(act(2)),
+                      "123": Consulta(FALLIDA, motivo="radicado inválido: debe tener 23 dígitos")})
+    correr(tmp_path, rs, f, Store(":memory:"), Reloj())
+    assert f.esperas == [] and len(f.llamadas) == 4
+
+
+def test_cancelar_durante_la_espera_del_repaso_y_reanudar_reintenta_lo_fallido(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 6)]
+    store, reloj = Store(":memory:"), Reloj()
+    f = CanceladoAlEsperar({r.radicado: CAIDA if r is rs[1] else ok(act(1)) for r in rs})
+    assert correr(tmp_path, rs, f, store, reloj).estado == main_mod.ESTADO_CANCELADO
+    f2 = FetcherFalso({r.radicado: ok(act(1)) for r in rs})
+    assert correr(tmp_path, rs, f2, store, reloj).estado == "Completo"
+    assert f2.llamadas == [rs[1].radicado]

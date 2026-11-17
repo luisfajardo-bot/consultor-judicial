@@ -26,6 +26,9 @@ MIN_MUESTRA = 10
 FALLAS_SEGUIDAS = 5
 # Ante una caída el ciclo espera y reintenta lo fallido antes de pausarse. La del 14-oct duró ~35 min.
 ESPERAS_CAIDA = (900, 1800)
+# Fallas sueltas (sin caída declarada) se reintentan una vez al final: el 17-nov fallaron 12 de 77 y
+# minutos después respondían bien.
+ESPERA_REPASO = 300
 MOTIVO_DETENIDO = "ciclo detenido: fuente no disponible"
 ESTADO_CANCELADO = "Cancelado por el usuario"
 ESTADO_PAUSADO = "Pausado: el portal bloqueó las consultas"
@@ -87,6 +90,8 @@ def correr_ciclo(
     detenido = bloqueado = cancelo = sin_respuesta = False
     ultimo = len(radicados) - 1
     caidas = 0
+    por_radicado: dict[str, Consulta] = {}  # último resultado de cada radicado en esta corrida: da el estado final
+    solo = None  # en el repaso final, los únicos radicados que se vuelven a consultar
     store.registrar_radicados(radicados)
 
     def avisar_cancelado():
@@ -97,14 +102,32 @@ def correr_ciclo(
         )
 
     i = 0
-    while i < len(radicados):
+    while True:
+        if i >= len(radicados):  # fin de la pasada: repaso final de las fallas del portal, una sola vez
+            if solo is not None or cancelo or bloqueado or sin_respuesta or detenido:
+                break
+            solo = {x for x, c in por_radicado.items() if c.falla_portal and c.estado == FALLIDA}
+            if not solo:
+                break
+            avisar_fn(
+                f"{len(solo)} radicado(s) fallaron por el portal. "
+                f"Se reintentan una vez en {ESPERA_REPASO // 60} min."
+            )
+            try:
+                fetcher.esperar(ESPERA_REPASO)
+            except CicloCancelado:
+                cancelo = True
+                avisar_cancelado()
+                break
+            i = consultados = fallas = cambios_api = no_hallados = seguidas = 0
+            continue
         r = radicados[i]
         i += 1
         if cancelado and cancelado():
             cancelo = True
             avisar_cancelado()
             break
-        if store.ya_consultado(ciclo_id, r.radicado):
+        if store.ya_consultado(ciclo_id, r.radicado) or (solo is not None and r.radicado not in solo):
             pass
         elif detenido:
             store.registrar_resultado(
@@ -141,6 +164,7 @@ def correr_ciclo(
             store.registrar_resultado(
                 ciclo_id, r.radicado, consulta, veredicto, store.ultima_actuacion(r.radicado), ahora()
             )
+            por_radicado[r.radicado] = consulta
             consultados += 1
             fallas += consulta.falla_portal
             seguidas = seguidas + 1 if consulta.falla_portal else 0
@@ -182,6 +206,18 @@ def correr_ciclo(
         if progreso:
             progreso(i, len(radicados), r.radicado)
 
+    # los contadores de la pasada sirven para detectar caídas; el estado final mira el último resultado de cada uno
+    finales = por_radicado.values()
+    consultados = len(por_radicado)
+    fallas = sum(c.falla_portal for c in finales)
+    cambios_api = sum(c.estado == ERROR for c in finales)
+    no_hallados = sum(c.no_hallado for c in finales)
+    sin_consultar = sum(c.falla_portal and c.estado == FALLIDA for c in finales)
+    if sin_consultar and not (cancelo or bloqueado or sin_respuesta or detenido):
+        avisar_fn(
+            f"{sin_consultar} radicado(s) no se pudieron consultar por fallas del portal, ni en el repaso final. "
+            "Salen como NO VERIFICADO en el reporte: consultarlos a mano o volver a lanzar la consulta más tarde."
+        )
     fuente_caida = consultados > 0 and fallas / consultados > max_fallas
     muchos_no_hallados = consultados >= MIN_MUESTRA and no_hallados / consultados > max_fallas
     if muchos_no_hallados:  # que casi ningún radicado exista apunta a la API, no a la lista
