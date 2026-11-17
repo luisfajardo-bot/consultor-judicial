@@ -25,7 +25,7 @@ Esa separación es la **arquitectura para escalar**: otra vista (por ejemplo una
 - `panel.py` tiene la lógica (`separar`, `contar_para_regla`, `evaluar_obligacion`, `accion_al_cerrar`, textos); `ventana.py` solo pinta.
 
 ## Al cerrar y regla de puesta al día
-- `WM_DELETE_WINDOW` pasa por `Ventana.al_cerrar`: 1) obligación activa: aviso sin opción de cerrar ("bloqueada"); 2) pendientes en el rango: pregunta si cierra igual ("cancelada" o "cerrada"); 3) nada pendiente: cierra. Una consulta en curso no cambia los pasos.
+- `WM_DELETE_WINDOW` pasa por `Ventana.al_cerrar`: 1) obligación activa: aviso sin opción de cerrar ("bloqueada"); 2) pendientes en el rango: pregunta si cierra igual ("cancelada" o "cerrada"); 3) nada pendiente: cierra. Una consulta en curso no cambia los pasos. Si la base falla al cerrar, usa lo último leído; si nunca se pudo leer, pregunta si cierra igual (la ventana nunca queda trabada).
 - La regla (R10 en [[Reglas de negocio]]) está **apagada** por defecto: se enciende en `[alertas]` de `config.toml`. Activa, muestra un aviso rojo de una línea sobre las pestañas y abre en Anteriores. **Consultar ahora** no se bloquea.
 - Usa su propio corte (`dias_corte_regla`), no el campo de días de la ventana. La obligación se guarda en `estado_app` ([[store]]); si la base está ocupada al guardarla, la ventana conserva el último estado conocido.
 
@@ -35,7 +35,7 @@ Esa separación es la **arquitectura para escalar**: otra vista (por ejemplo una
 
 ## Cuidados
 - No envía datos a ningún servicio externo.
-- No abre la base mientras hay un ciclo en curso, para no esperar un bloqueo de SQLite.
+- Mientras hay un ciclo en curso no lee el resumen de la base, pero la lista de alertas sí se lee y se decide: al decidir prueba la base con espera corta (2 s) y, si está ocupada, avisa sin perder la selección; si una lectura la encuentra ocupada, conserva lo último leído y reintenta en la siguiente vuelta.
 - Solo Windows. En Linux y Docker no hay ventana.
 - Las pruebas usan una sola raíz de tkinter por sesión: crear y destruir varias en el mismo proceso falla de forma intermitente en Windows.
 
