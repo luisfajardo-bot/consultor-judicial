@@ -1,11 +1,23 @@
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+
+import pytest
 
 from consultor.bloqueo import Bloqueo
 from consultor.models import SIN_CAMBIO, Radicado, Veredicto
 from consultor.panel import (
+    TEXTO_CIERRE_SIN_LISTA,
     Avance,
+    ConfigAlertas,
+    accion_al_cerrar,
+    clave_recarga,
+    config_alertas,
+    contar_para_regla,
+    evaluar_obligacion,
+    separar,
+    texto_dias_guardado,
+    texto_pestana_rango,
     leer_avance,
     resumen_ultimo_ciclo,
     solicitar_cancelacion,
@@ -17,6 +29,7 @@ from consultor.store import Store
 from tests.utiles import act, ok
 
 AHORA = datetime(2026, 10, 12, 9, 0, 0)
+HOY_PANEL = date(2026, 11, 13)
 
 
 def leer_avance_falso(hecho, total, segundos):
@@ -87,3 +100,100 @@ def test_textos_para_la_ventana():
     assert "2026-10-12 09:02" in t and "1 consultados" in t and "0 posibles novedades" in t
     assert "Consultando" in texto_avance(leer_avance_falso(5, 44, 10))
     assert "sin avance" in texto_avance(leer_avance_falso(5, 44, 200)).lower()
+
+
+HOY = date(2026, 11, 17)
+
+
+def _p(*dias_atras):
+    return [{"id": i, "detectada": f"{HOY - timedelta(days=d)}T08:00:00"} for i, d in enumerate(dias_atras)]
+
+
+def test_separar_frontera_inclusiva():
+    en, ant = separar(_p(0, 7, 8), HOY, 7)
+    assert [x["id"] for x in en] == [0, 1] and [x["id"] for x in ant] == [2]
+
+
+def test_separar_con_cero_dias_deja_solo_hoy():
+    en, ant = separar(_p(0, 1), HOY, 0)
+    assert [x["id"] for x in en] == [0] and [x["id"] for x in ant] == [1]
+
+
+def test_evaluar_obligacion_se_activa_sobre_30_y_se_libera_bajo_10():
+    c = ConfigAlertas(exigir=True)
+    assert evaluar_obligacion(False, 30, c) is False
+    assert evaluar_obligacion(False, 31, c) is True
+    assert evaluar_obligacion(True, 10, c) is True
+    assert evaluar_obligacion(True, 9, c) is False
+    assert evaluar_obligacion(True, 50, ConfigAlertas(exigir=False)) is False
+
+
+def test_la_regla_usa_su_propio_corte_y_no_el_campo_dias():
+    p = _p(*([20] * 31))
+    assert contar_para_regla(p, HOY, ConfigAlertas(exigir=True, dias_corte=7)) == 31
+
+
+def test_accion_al_cerrar():
+    c = ConfigAlertas(exigir=True)
+    assert accion_al_cerrar(True, 44, 3, 7, c).tipo == "bloquear"
+    assert "Faltan 35." in accion_al_cerrar(True, 44, 3, 7, c).texto
+    a = accion_al_cerrar(False, 0, 3, 7, c)
+    assert a.tipo == "preguntar" and a.texto == "Quedan 3 alertas por decidir de los últimos 7 días. ¿Cerrar de todas formas?"
+    assert accion_al_cerrar(False, 0, 0, 7, c).tipo == "cerrar"
+
+
+def test_config_alertas_por_defecto_apagada():
+    assert config_alertas({}) == ConfigAlertas(False, 30, 10, 7)
+
+
+def test_textos_de_pestanas_y_guardado():
+    assert texto_pestana_rango(7, 5) == "Por decidir · últimos 7 días (5)"
+    assert texto_pestana_rango(0, 2) == "Por decidir · hoy (2)"
+    assert texto_dias_guardado(0).startswith("Guardado: 0 días. No se avisará nada")
+
+
+def test_cerrar_con_cero_dias_dice_de_hoy():
+    a = accion_al_cerrar(False, 0, 2, 0, ConfigAlertas())
+    assert a.texto == "Quedan 2 alertas por decidir de hoy. ¿Cerrar de todas formas?"
+
+
+def test_sin_haber_leido_la_lista_al_cerrar_se_pregunta():
+    a = accion_al_cerrar(False, 0, 0, 7, ConfigAlertas(), lista_leida=False)
+    assert a.tipo == "preguntar" and a.texto == TEXTO_CIERRE_SIN_LISTA
+    assert accion_al_cerrar(True, 44, 0, 7, ConfigAlertas(exigir=True), lista_leida=False).tipo == "bloquear"
+
+
+def test_config_alertas_convierte_tipos():
+    c = config_alertas(
+        {"alertas": {"exigir_puesta_al_dia": True, "umbral_anteriores": "40", "objetivo_anteriores": 5.0,
+                     "dias_corte_regla": "3"}}
+    )
+    assert c == ConfigAlertas(True, 40, 5, 3)
+
+
+@pytest.mark.parametrize(
+    "alertas, esperado",
+    [
+        ({"umbral_anteriores": "treinta"}, ConfigAlertas()),
+        ({"umbral_anteriores": -1}, ConfigAlertas()),
+        ({"dias_corte_regla": -3, "umbral_anteriores": 50}, ConfigAlertas(umbral=50)),
+        ({"dias_corte_regla": 2.5}, ConfigAlertas()),
+        ({"objetivo_anteriores": 40}, ConfigAlertas()),  # objetivo > umbral: los dos por defecto
+        ({"umbral_anteriores": 5, "objetivo_anteriores": 8}, ConfigAlertas()),
+        ({"umbral_anteriores": True}, ConfigAlertas()),
+        ({"exigir_puesta_al_dia": "false"}, ConfigAlertas()),
+        ({"exigir_puesta_al_dia": 1}, ConfigAlertas()),
+        ({"umbral_anteriores": None, "exigir_puesta_al_dia": True}, ConfigAlertas(exigir=True)),
+    ],
+)
+def test_config_alertas_invalida_vuelve_al_valor_por_defecto(alertas, esperado):
+    assert config_alertas({"alertas": alertas}) == esperado
+
+
+def test_la_clave_de_recarga_cambia_con_el_cierre_el_estado_o_el_dia():
+    fin = datetime(2026, 11, 13, 9, 0)
+    base = clave_recarga(HOY_PANEL, 4, fin, "Pausado")
+    assert base == clave_recarga(HOY_PANEL, 4, fin, "Pausado")
+    assert base != clave_recarga(HOY_PANEL, 4, fin + timedelta(hours=1), "Completo")
+    assert base != clave_recarga(HOY_PANEL, 4, fin, "Completo")
+    assert base != clave_recarga(HOY_PANEL + timedelta(days=1), 4, fin, "Pausado")

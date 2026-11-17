@@ -1,3 +1,7 @@
+import itertools
+import sqlite3
+from datetime import date, datetime, time, timedelta
+
 import pytest
 
 # En Linux sin librerías gráficas el import falla con ImportError, no con ModuleNotFoundError
@@ -5,8 +9,16 @@ tk = pytest.importorskip("tkinter", exc_type=ImportError)
 
 import consultor.main as main_mod  # noqa: E402
 from consultor.bloqueo import Bloqueo  # noqa: E402
+from consultor.models import CONFIRMADA, DESCARTADA, PENDIENTE, POSIBLE_NOVEDAD, Veredicto  # noqa: E402
+from consultor.reporter import ENLACE_PORTAL  # noqa: E402
+from consultor.store import Store  # noqa: E402
 from consultor.ventana import Ventana  # noqa: E402
-from tests.test_main import preparar  # noqa: E402
+from tests.test_main import R1, preparar  # noqa: E402
+from tests.utiles import act, ok  # noqa: E402
+
+HOY = date(2026, 11, 13)
+RADICADO = R1.radicado
+_ACTUACIONES = itertools.count(1000)  # id_reg_actuacion únicos entre llamadas a _con_alertas
 
 
 @pytest.fixture(scope="session")
@@ -206,3 +218,611 @@ def test_apagar_desde_la_ventana_guarda_el_interruptor_y_bloquea_consultar(raiz,
     v.boton_encendido.invoke()
     v.refrescar()
     assert consultas_activas(tmp_path / "datos") and _estado(v.boton_consultar) == "normal"
+
+
+def _con_alertas(cfg, hoy: int = 0, hace_20_dias: int = 0) -> list[int]:
+    """Crea alertas Pendiente detectadas HOY y hace 20 días. Devuelve los ids, primero las de hoy."""
+    store = Store(cfg["salida"]["base_datos"])
+    try:
+        store.registrar_radicado(R1)
+        ids = []
+        for cantidad, dia in ((hoy, HOY), (hace_20_dias, HOY - timedelta(days=20))):
+            if not cantidad:
+                continue
+            momento = datetime.combine(dia, time(10, 0))
+            numeros = [next(_ACTUACIONES) for _ in range(cantidad)]
+            nuevas = tuple(act(n, fecha="2026-11-10", texto=f"Actuación {n}", anotacion=f"Anotación {n}") for n in numeros)
+            ciclo = store.iniciar_ciclo(momento)
+            store.registrar_resultado(
+                ciclo, RADICADO, ok(*nuevas), Veredicto(POSIBLE_NOVEDAD, nuevas=nuevas), "", momento
+            )
+            store.cerrar_ciclo(ciclo, "Completo", momento)
+            ids += [f["id"] for f in store.con.execute("SELECT id FROM alerta WHERE ciclo_id = ? ORDER BY id", (ciclo,))]
+        return ids
+    finally:
+        store.con.close()
+
+
+def _decidir(cfg, ids, estado=CONFIRMADA) -> None:
+    store = Store(cfg["salida"]["base_datos"])
+    try:
+        store.decidir(ids, estado, "Alisson", datetime.now())
+    finally:
+        store.con.close()
+
+
+def _ventana(raiz, cfg, **k):
+    v = Ventana(raiz, cfg, hoy=lambda: HOY, **k)
+    v.raiz.after = lambda ms, fn: None  # sondear no queda programado sobre una ventana que se destruye
+    return v
+
+
+def test_las_pestanas_separan_rango_y_anteriores(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2, hace_20_dias=3)
+    v = _ventana(raiz, cfg)
+    v.recargar_alertas()
+    assert len(v.tabla_rango.get_children()) == 2 and len(v.tabla_anteriores.get_children()) == 3
+    assert v.pestanas.tab(0, "text") == "Por decidir · últimos 7 días (2)"
+    assert v.pestanas.tab(1, "text") == "Anteriores sin decidir (3)"
+    marca, detectada, radicado, fecha, actuacion = v.tabla_rango.item(str(ids[0]), "values")
+    assert (marca, detectada, fecha) == ("☐", "13-nov", "10-nov")
+    assert RADICADO.endswith(radicado.lstrip("…"))
+    assert v.tabla_anteriores.item(str(ids[2]), "values")[1] == "24-oct"
+
+
+def test_la_ventana_carga_las_alertas_al_abrir(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=1)
+    v = _ventana(raiz, cfg)
+    assert len(v.tabla_rango.get_children()) == 1
+
+
+def test_marcar_alterna_la_casilla(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2)
+    v = _ventana(raiz, cfg)
+    v.alternar_marca(ids[0])
+    assert v.marcadas == {ids[0]} and v.tabla_rango.item(str(ids[0]), "values")[0] == "☑"
+    v.alternar_marca(ids[0])
+    assert v.marcadas == set() and v.tabla_rango.item(str(ids[0]), "values")[0] == "☐"
+
+
+def test_seleccionar_todas_alterna_con_quitar_seleccion(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2, hace_20_dias=1)
+    v = _ventana(raiz, cfg)
+    v.seleccionar_todas()
+    assert v.marcadas == set(ids[:2]) and v.boton_todas.cget("text") == "Quitar selección"
+    v.seleccionar_todas()
+    assert v.marcadas == set() and v.boton_todas.cget("text") == "Seleccionar todas"
+
+
+def test_seleccionar_todas_y_confirmar_deja_la_pestana_al_dia(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2, hace_20_dias=1)
+    v = _ventana(raiz, cfg)
+    v.recargar_alertas()
+    v.seleccionar_todas()
+    assert v.aplicar(CONFIRMADA) == 2
+    assert v.tabla_rango.get_children() == () and "Al día ✓" in v.etiqueta_alertas.cget("text")
+    assert v.pestanas.tab(0, "text") == "Por decidir · últimos 7 días (0)"
+    assert v.marcadas == set()
+    store = Store(cfg["salida"]["base_datos"])
+    try:
+        assert [(h["estado_nuevo"], h["usuario"], h["origen"]) for h in store.historial(ids[0])] == [
+            (CONFIRMADA, "Alisson", "ventana")
+        ]
+    finally:
+        store.con.close()
+
+
+def test_mas_de_cinco_pide_confirmacion_y_si_no_se_confirma_no_cambia(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=6)
+    preguntas = []
+    v = _ventana(raiz, cfg, preguntar=lambda t, x: preguntas.append(x) or False)
+    v.recargar_alertas()
+    v.seleccionar_todas()
+    assert v.aplicar(DESCARTADA) == 0 and preguntas == ["¿Descartar 6 alertas? Se puede corregir desde Ver decididas."]
+    assert len(v.tabla_rango.get_children()) == 6 and len(v.marcadas) == 6
+
+
+def test_cinco_o_menos_no_pide_confirmacion(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=5)
+    preguntas = []
+    v = _ventana(raiz, cfg, preguntar=lambda t, x: preguntas.append(x) or False)
+    v.seleccionar_todas()
+    assert v.aplicar(DESCARTADA) == 5 and preguntas == []
+
+
+def test_sin_seleccion_avisa_y_no_cambia(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=2)
+    v = _ventana(raiz, cfg)
+    assert v.aplicar(CONFIRMADA) == 0
+    assert v.etiqueta_alertas.cget("text") == "Seleccione al menos una alerta."
+    assert len(v.tabla_rango.get_children()) == 2
+
+
+def test_con_la_base_ocupada_avisa_y_conserva_la_seleccion(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=2)
+    v = _ventana(raiz, cfg)
+    v.seleccionar_todas()
+    otra = sqlite3.connect(cfg["salida"]["base_datos"], timeout=0)
+    otra.execute("BEGIN EXCLUSIVE")
+    try:
+        assert v.aplicar(CONFIRMADA) == 0
+        assert v.etiqueta_alertas.cget("text") == (
+            "La base está ocupada por una consulta; intente de nuevo en unos segundos."
+        )
+        assert len(v.marcadas) == 2
+    finally:
+        otra.rollback()
+        otra.close()
+    assert v.aplicar(CONFIRMADA) == 2  # libre la base, la misma selección se aplica
+
+
+def test_el_refresco_de_cada_segundo_no_borra_las_marcas(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2)
+    v = _ventana(raiz, cfg)
+    v.alternar_marca(ids[0])
+    v.sondear()
+    assert v.marcadas == {ids[0]}
+
+
+def test_sondear_solo_recarga_cuando_termina_otro_ciclo(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2)
+    v = _ventana(raiz, cfg)
+    v.alternar_marca(ids[0])
+    v.sondear()
+    v.sondear()
+    _decidir(cfg, [ids[1]])  # otro equipo decide, sin ciclo nuevo: la lista no se repinta todavía
+    v.sondear()
+    assert len(v.tabla_rango.get_children()) == 2
+    nuevas = _con_alertas(cfg, hoy=1)  # termina otro ciclo
+    v.sondear()
+    assert set(v.tabla_rango.get_children()) == {str(ids[0]), str(nuevas[0])}
+    assert v.marcadas == {ids[0]}
+
+
+def test_al_recargar_se_sueltan_las_marcas_de_alertas_que_ya_no_estan(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2)
+    v = _ventana(raiz, cfg)
+    v.seleccionar_todas()
+    _decidir(cfg, [ids[1]])
+    v.recargar_alertas()
+    assert v.marcadas == {ids[0]}
+
+
+def test_guardar_dias_recarga_las_pestanas_y_explica_las_dos_cosas(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=2, hace_20_dias=3)
+    v = _ventana(raiz, cfg)
+    v.dias.set("30")
+    v.guardar_dias()
+    assert len(v.tabla_rango.get_children()) == 5
+    assert "La pestaña Por decidir ya muestra los últimos 30 días" in v.etiqueta_ajuste.cget("text")
+    assert v.pestanas.tab(1, "text") == "Anteriores sin decidir (0)"
+
+
+def test_guardar_cero_dias_dice_que_solo_muestra_hoy(raiz, tmp_path, monkeypatch):
+    v = _ventana(raiz, _cfg(tmp_path, monkeypatch))
+    v.dias.set("0")
+    v.guardar_dias()
+    assert v.etiqueta_ajuste.cget("text") == (
+        "Guardado: 0 días. No se avisará nada en radicados nuevos; Por decidir muestra solo lo detectado hoy."
+    )
+    assert v.pestanas.tab(0, "text") == "Por decidir · hoy (0)"
+
+
+def test_el_detalle_muestra_la_fila_enfocada(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    v = _ventana(raiz, cfg)
+    v.tabla_rango.focus(str(ids[0]))
+    v.mostrar_detalle()
+    texto = v.texto_detalle()
+    actuacion = v.tabla_rango.item(str(ids[0]), "values")[4]
+    numero = actuacion.split()[-1]
+    assert RADICADO in texto and "JUZGADO 077" in texto and actuacion in texto and f"Anotación {numero}" in texto
+
+
+def test_abrir_en_el_portal_copia_el_radicado(raiz, tmp_path, monkeypatch):
+    abiertos = []
+    monkeypatch.setattr("webbrowser.open", abiertos.append)
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    v = _ventana(raiz, cfg)
+    v.tabla_rango.focus(str(ids[0]))
+    v.abrir_portal()
+    assert abiertos == [ENLACE_PORTAL] and raiz.clipboard_get() == RADICADO
+    assert v.etiqueta_alertas.cget("text") == "Radicado copiado"
+
+
+def test_la_ventana_cabe_en_una_pantalla_de_768_px(raiz, tmp_path, monkeypatch):
+    # 1366×768 con barra de tareas y título deja ~700 px; se reservan 25 px para el aviso rojo de la Task 6.
+    escala = raiz.tk.call("tk", "scaling")
+    raiz.tk.call("tk", "scaling", 1.33)  # = Windows al 100 %
+    try:
+        cfg = _cfg(tmp_path, monkeypatch)
+        ids = _con_alertas(cfg, hoy=8, hace_20_dias=3)
+        con = sqlite3.connect(cfg["salida"]["base_datos"])
+        with con:
+            con.execute("UPDATE actuacion SET anotacion = ?", ("Texto largo de la anotación. " * 40,))
+        con.close()
+        v = _ventana(raiz, cfg)
+        v.refrescar()
+        v.tabla_rango.focus(str(ids[0]))
+        v.mostrar_detalle()
+        raiz.update_idletasks()
+        assert "Texto largo" in v.texto_detalle()
+        assert raiz.winfo_reqheight() <= 700 - 25
+    finally:
+        raiz.tk.call("tk", "scaling", escala)
+
+
+def test_corregir_una_descartada_a_pendiente_la_devuelve_a_la_lista(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=2)
+    v = _ventana(raiz, cfg)
+    v.seleccionar_todas()
+    v.aplicar(DESCARTADA)
+    d = v.ver_decididas()
+    try:
+        d.tabla.selection_set(str(ids[0]))
+        assert d.corregir(PENDIENTE) == 1
+        assert str(ids[0]) in v.tabla_rango.get_children()
+        assert str(ids[0]) not in d.tabla.get_children()
+    finally:
+        d.ventana.destroy()
+
+
+def test_filtrar_decididas_y_ver_historial(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=3)
+    confirmadas, descartada = ids[:2], ids[2:]
+    _decidir(cfg, confirmadas, CONFIRMADA)
+    _decidir(cfg, descartada, DESCARTADA)
+    v = _ventana(raiz, cfg)
+    d = v.ver_decididas()
+    try:
+        assert len(d.tabla.get_children()) == 3
+        d.filtro.set("Confirmada")
+        d.recargar()
+        assert set(d.tabla.get_children()) == {str(i) for i in confirmadas}
+        d.tabla.selection_set(str(confirmadas[0]))
+        d.tabla.event_generate("<<TreeviewSelect>>")
+        raiz.update()
+        assert "Pendiente → Confirmada" in d.etiqueta_historial.cget("text")
+        assert "(ventana)" in d.etiqueta_historial.cget("text")
+    finally:
+        d.ventana.destroy()
+
+
+def test_corregir_sin_seleccion_avisa_y_no_cambia_nada(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _decidir(cfg, _con_alertas(cfg, hoy=1))
+    v = _ventana(raiz, cfg)
+    d = v.ver_decididas()
+    try:
+        assert d.corregir(DESCARTADA) == 0
+        assert d.etiqueta_aviso.cget("text") == "Seleccione al menos una alerta."
+    finally:
+        d.ventana.destroy()
+
+
+def test_ver_decididas_dos_veces_no_apila_ventanas(raiz, tmp_path, monkeypatch):
+    v = _ventana(raiz, _cfg(tmp_path, monkeypatch))
+    d = v.ver_decididas()
+    try:
+        assert v.ver_decididas() is d
+    finally:
+        d.ventana.destroy()
+    assert v.ver_decididas() is not d
+    v.decididas.ventana.destroy()
+
+
+def test_corregir_con_la_base_ocupada_avisa(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    _decidir(cfg, ids)
+    v = _ventana(raiz, cfg)
+    d = v.ver_decididas()
+    try:
+        d.tabla.selection_set(str(ids[0]))
+
+        def ocupada(*a):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(v, "_decidir", ocupada)
+        assert d.corregir(DESCARTADA) == 0
+        assert "ocupada" in d.etiqueta_aviso.cget("text")
+    finally:
+        d.ventana.destroy()
+
+
+def _cerrar_ventana(raiz, cfg, preguntar=None, informar=None):
+    cerradas, avisos, preguntas = [], [], []
+    v = _ventana(
+        raiz,
+        cfg,
+        preguntar=preguntar or (lambda t, x: preguntas.append(x) or True),
+        informar=lambda t, x: avisos.append(x),
+        cerrar=lambda: cerradas.append(1),
+    )
+    v.recargar_alertas()
+    return v, cerradas, avisos, preguntas
+
+
+def _con_regla(cfg):
+    cfg["alertas"] = {"exigir_puesta_al_dia": True}
+
+
+def test_cerrar_sin_pendientes_cierra(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    v, cerradas, avisos, preguntas = _cerrar_ventana(raiz, cfg)
+    assert v.al_cerrar() == "cerrada" and cerradas and not avisos and not preguntas
+
+
+def test_cerrar_con_pendientes_pregunta_y_respeta_la_respuesta(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=3)
+    v, cerradas, _, preguntas = _cerrar_ventana(raiz, cfg, preguntar=lambda t, x: False)
+    assert v.al_cerrar() == "cancelada" and not cerradas
+    v2, cerradas2, _, preguntas2 = _cerrar_ventana(raiz, cfg)
+    assert v2.al_cerrar() == "cerrada" and cerradas2
+    assert preguntas2 == ["Quedan 3 alertas por decidir de los últimos 7 días. ¿Cerrar de todas formas?"]
+
+
+def test_regla_apagada_no_bloquea_aunque_haya_44_anteriores(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, cerradas, avisos, _ = _cerrar_ventana(raiz, cfg)
+    assert v.al_cerrar() == "cerrada" and cerradas and not avisos
+    assert not v.etiqueta_obligacion.winfo_ismapped() and not v.etiqueta_obligacion.winfo_manager()
+
+
+def test_regla_encendida_bloquea_hasta_bajar_de_10_y_sobrevive_a_reabrir(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    ids = _con_alertas(cfg, hace_20_dias=44)
+    v, cerradas, avisos, _ = _cerrar_ventana(raiz, cfg)
+    assert v.al_cerrar() == "bloqueada" and not cerradas
+    assert "Faltan 35." in v.etiqueta_obligacion.cget("text")
+    assert avisos and "Faltan 35." in avisos[0]
+    assert v.pestanas.index("current") == 1
+    _decidir(cfg, ids[:20])  # quedan 24: sigue activa aunque sea < 30
+    v2, cerradas2, _, _ = _cerrar_ventana(raiz, cfg)
+    assert v2.al_cerrar() == "bloqueada"
+    _decidir(cfg, ids[20:35])  # quedan 9
+    v2.recargar_alertas()
+    assert v2.al_cerrar() == "cerrada" and cerradas2
+    assert not v2.etiqueta_obligacion.winfo_manager()
+
+
+def test_la_regla_usa_su_propio_corte_y_no_el_campo_de_dias(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, _, _, _ = _cerrar_ventana(raiz, cfg)
+    v.dias.set("365")
+    v.guardar_dias()  # las 44 pasan a Por decidir, pero para la regla siguen siendo anteriores
+    assert v.al_cerrar() == "bloqueada"
+
+
+def test_con_consulta_en_curso_el_cierre_sigue_las_mismas_reglas(raiz, tmp_path, monkeypatch):
+    import threading
+
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, cerradas, _, _ = _cerrar_ventana(raiz, cfg)
+    parar = threading.Event()
+    v.hilo = threading.Thread(target=parar.wait, daemon=True)
+    v.hilo.start()
+    try:
+        assert v.al_cerrar() == "bloqueada" and not cerradas
+    finally:
+        parar.set()
+        v.hilo.join()
+
+
+def test_consultar_ahora_no_se_bloquea_con_la_obligacion_activa(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, _, _, _ = _cerrar_ventana(raiz, cfg)
+    v.refrescar()
+    assert v.obligacion and str(v.boton_consultar.cget("state")) == "normal"
+
+
+def test_base_ocupada_al_fijar_la_obligacion_no_rompe_y_conserva_el_estado(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    _con_alertas(cfg, hace_20_dias=44)
+    v, _, _, _ = _cerrar_ventana(raiz, cfg)
+    assert v.obligacion
+
+    def ocupada(self, activa):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Store, "fijar_obligacion", ocupada)
+    v.recargar_alertas()
+    assert v.obligacion and v.al_cerrar() == "bloqueada"
+
+
+def test_con_el_aviso_rojo_visible_la_ventana_sigue_cabiendo_en_700_px(raiz, tmp_path, monkeypatch):
+    escala = raiz.tk.call("tk", "scaling")
+    raiz.tk.call("tk", "scaling", 1.33)
+    try:
+        cfg = _cfg(tmp_path, monkeypatch)
+        _con_regla(cfg)
+        _con_alertas(cfg, hoy=8, hace_20_dias=44)
+        v, _, _, _ = _cerrar_ventana(raiz, cfg)
+        raiz.update_idletasks()
+        assert v.etiqueta_obligacion.winfo_manager() == "pack"
+        assert raiz.winfo_reqheight() <= 700
+    finally:
+        raiz.tk.call("tk", "scaling", escala)
+
+
+def test_la_obligacion_no_se_libera_si_fallo_guardarla_con_la_base_ocupada(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_regla(cfg)
+    ids = _con_alertas(cfg, hace_20_dias=44)
+    real = Store.fijar_obligacion
+
+    def ocupada(self, activa):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Store, "fijar_obligacion", ocupada)
+    v, _, _, _ = _cerrar_ventana(raiz, cfg)
+    assert v.obligacion
+    monkeypatch.setattr(Store, "fijar_obligacion", real)
+    _decidir(cfg, ids[:20])  # quedan 24: entre objetivo y umbral, debe seguir activa
+    v.recargar_alertas()
+    assert v.obligacion and v.al_cerrar() == "bloqueada"
+
+
+def test_los_dialogos_de_cierre_por_defecto_tienen_los_botones_del_spec(raiz, tmp_path, monkeypatch):
+    v = _ventana(raiz, _cfg(tmp_path, monkeypatch))
+    d, botones, resultado = v.crear_dialogo_cierre("Alertas sin decidir", "texto", True)
+    assert [b.cget("text") for b in botones] == ["Volver a revisar", "Cerrar igual"]
+    botones[1].invoke()
+    assert resultado["cerrar"] is True
+    d, botones, resultado = v.crear_dialogo_cierre("Alertas sin decidir", "texto", False)
+    assert [b.cget("text") for b in botones] == ["Volver a revisar"]
+    botones[0].invoke()
+    assert resultado["cerrar"] is False
+
+
+def _base_rota(monkeypatch):
+    def rota(self):
+        raise sqlite3.DatabaseError("file is not a database")
+
+    monkeypatch.setattr(Store, "alertas_pendientes", rota)
+
+
+def test_si_la_base_falla_al_abrir_la_ventana_abre_avisa_y_reintenta(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    with monkeypatch.context() as m:
+        _base_rota(m)
+        v = _ventana(raiz, cfg)
+        assert v.etiqueta_estado.cget("text") == "No se pudo actualizar la pantalla (DatabaseError). Avise a Sistemas."
+        v.sondear()  # sigue fallando: el aviso queda
+        assert "Avise a Sistemas" in v.etiqueta_estado.cget("text")
+    v.sondear()  # la base se recuperó: se carga la lista y se quita el aviso
+    assert v.tabla_rango.get_children() == (str(ids[0]),)
+    assert v.etiqueta_estado.cget("text") == ""
+
+
+def test_si_la_base_falla_al_cerrar_se_usa_lo_ultimo_leido(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    _con_alertas(cfg, hoy=3)
+    v, cerradas, _, preguntas = _cerrar_ventana(raiz, cfg)
+    _base_rota(monkeypatch)
+    assert v.al_cerrar() == "cerrada" and cerradas
+    assert preguntas == ["Quedan 3 alertas por decidir de los últimos 7 días. ¿Cerrar de todas formas?"]
+
+
+def test_si_la_base_nunca_se_pudo_leer_al_cerrar_se_pregunta_sin_trabar(raiz, tmp_path, monkeypatch):
+    from consultor.panel import TEXTO_CIERRE_SIN_LISTA
+
+    cfg = _cfg(tmp_path, monkeypatch)
+    _base_rota(monkeypatch)
+    cerradas, preguntas = [], []
+    v = _ventana(
+        raiz,
+        cfg,
+        preguntar=lambda t, x: preguntas.append(x) or True,
+        informar=lambda t, x: pytest.fail("no debe bloquear"),
+        cerrar=lambda: cerradas.append(1),
+    )
+    assert v.al_cerrar() == "cerrada" and cerradas
+    assert preguntas == [TEXTO_CIERRE_SIN_LISTA]
+
+
+def test_sondear_recarga_si_otra_consulta_reanuda_y_cierra_el_mismo_ciclo(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    store = Store(cfg["salida"]["base_datos"])
+    try:
+        ciclo = store.iniciar_ciclo(datetime.combine(HOY, time(11, 0)))
+        store.cerrar_ciclo(ciclo, "Pausado", datetime.combine(HOY, time(11, 5)))
+        v = _ventana(raiz, cfg)
+        v.sondear()
+        v.sondear()
+        momento = datetime.combine(HOY, time(11, 10))
+        assert store.iniciar_ciclo(momento) == ciclo  # se reanuda el mismo ciclo, como ejecutar_ahora.bat
+        nueva = act(next(_ACTUACIONES), fecha="2026-11-12", texto="Auto", anotacion="")
+        store.registrar_resultado(ciclo, RADICADO, ok(nueva), Veredicto(POSIBLE_NOVEDAD, nuevas=(nueva,)), "", momento)
+        store.cerrar_ciclo(ciclo, "Completo", datetime.combine(HOY, time(11, 20)))
+    finally:
+        store.con.close()
+    v.sondear()
+    assert len(v.tabla_rango.get_children()) == 2 and str(ids[0]) in v.tabla_rango.get_children()
+
+
+def test_al_cambiar_el_dia_sondear_recarga_las_pestanas(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    ids = _con_alertas(cfg, hoy=1)
+    dia = [HOY]
+    v = Ventana(raiz, cfg, hoy=lambda: dia[0])
+    v.raiz.after = lambda ms, fn: None
+    v.sondear()
+    assert v.tabla_rango.get_children() == (str(ids[0]),)
+    dia[0] = HOY + timedelta(days=8)  # la ventana quedó abierta: pasada la medianoche la alerta sale del rango
+    v.sondear()
+    assert v.tabla_rango.get_children() == () and v.tabla_anteriores.get_children() == (str(ids[0]),)
+
+
+def test_recargar_solo_escribe_la_obligacion_cuando_cambia(raiz, tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    escrituras = []
+    real = Store.fijar_obligacion
+    monkeypatch.setattr(Store, "fijar_obligacion", lambda self, activa: escrituras.append(activa) or real(self, activa))
+    _con_alertas(cfg, hace_20_dias=44)
+    v = _ventana(raiz, cfg)
+    v.recargar_alertas()
+    assert escrituras == []  # regla apagada: nada que guardar
+    _con_regla(cfg)
+    v2 = _ventana(raiz, cfg)
+    v2.recargar_alertas()
+    v2.recargar_alertas()
+    assert escrituras == [True] and v2.obligacion
+
+
+def test_cerrar_ver_decididas_con_la_x_la_destruye_en_python(raiz, tmp_path, monkeypatch):
+    v = _ventana(raiz, _cfg(tmp_path, monkeypatch))
+    d = v.ver_decididas()
+    nombre = d.ventana.winfo_name()
+    comando = d.ventana.protocol("WM_DELETE_WINDOW")
+    assert comando, "la X debe tener su manejador"
+    d.ventana.tk.call(comando)
+    assert nombre not in raiz.children
+    assert v.ver_decididas() is not d
+    v.decididas.ventana.destroy()
+
+
+def test_una_ventana_destruida_se_libera_sin_esperar_al_recolector(raiz, tmp_path, monkeypatch):
+    import gc
+    import weakref
+
+    cfg = _cfg(tmp_path, monkeypatch)
+    marco = tk.Toplevel(raiz)
+    v = _ventana(marco, cfg)
+    ref = weakref.ref(v)
+    gc.disable()  # sin ciclos de referencias, la ventana se libera en este hilo y no en otro
+    try:
+        marco.destroy()
+        del v
+        assert ref() is None
+    finally:
+        gc.enable()

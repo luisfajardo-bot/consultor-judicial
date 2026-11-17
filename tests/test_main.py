@@ -92,6 +92,27 @@ def test_decision_de_alisson_se_registra_y_no_se_repite(tmp_path):
     assert anterior["validada_por"] == "Alisson Rengifo"  # validador por defecto (CA5)
 
 
+def test_el_ciclo_avisa_las_decisiones_del_excel_ignoradas(tmp_path):
+    avisos = []
+    store, reloj, f, r1, r2 = dos_ciclos(tmp_path)
+    alerta_id = store.filas_reporte(r2.ciclo_id)[0]["alerta_id"]
+    wb = load_workbook(r2.reporte)
+    hoja = wb["Alertas"]
+    enc = [c.value for c in hoja[1]]
+    hoja.cell(row=2, column=enc.index("Decisión") + 1, value="Descartada")
+    wb.save(r2.reporte)
+
+    reloj.avanzar(dias=1)
+    store.decidir([alerta_id], "Confirmada", "Alisson", reloj())
+    reloj.avanzar(dias=1)
+    store.decidir([alerta_id], "Pendiente", "Alisson", reloj())
+    reloj.avanzar(dias=1)
+    correr(tmp_path, [R1], f, store, reloj, avisos)
+    assert any("1 decisión(es) de reportes anteriores se ignoraron" in a for a in avisos)
+    assert not any("Se registraron" in a for a in avisos)
+    assert store.historial(alerta_id)[-1]["estado_nuevo"] == "Pendiente"
+
+
 def test_r5_detiene_y_marca_el_resto_como_no_verificado(tmp_path):
     radicados = [Radicado(f"{i:023d}") for i in range(1, 13)]
     caida = Consulta(FALLIDA, motivo="HTTP 503", falla_portal=True)

@@ -14,7 +14,7 @@ from consultor.models import (
     Radicado,
     Veredicto,
 )
-from consultor.store import Store
+from consultor.store import EXCEL_APLICADA, EXCEL_IGNORADA, EXCEL_SIN_EFECTO, Store
 from tests.utiles import act, ok
 
 AHORA = datetime(2026, 10, 12, 7, 0, 0)
@@ -91,14 +91,30 @@ def test_novedad_crea_alerta_pendiente_con_sus_datos(store):
     assert f["empresa"] == "ICEIN"
 
 
-def test_decision_solo_desde_pendiente_y_se_conserva_la_primera(store):
-    c2 = _con_novedad(store)
-    alerta_id = store.filas_reporte(c2)[0]["alerta_id"]
-    assert store.registrar_decision(alerta_id, DESCARTADA, "Alisson", AHORA) is True
-    assert store.registrar_decision(alerta_id, CONFIRMADA, "Otra persona", AHORA) is False
+def test_excel_aplica_solo_sobre_pendiente(store):
+    c2 = _con_novedad(store); a = store.filas_reporte(c2)[0]["alerta_id"]
+    assert store.registrar_decision(a, DESCARTADA, "Alisson", AHORA) == EXCEL_APLICADA
+    assert store.registrar_decision(a, CONFIRMADA, "Otra", AHORA) == EXCEL_SIN_EFECTO
+    assert store.historial(a)[-1]["origen"] == "excel"
     f = store.filas_reporte(c2)[0]
     assert f["decision"] == DESCARTADA
     assert f["validada_por"] == "Alisson"
+
+
+def test_excel_viejo_no_pisa_una_vuelta_a_pendiente_hecha_en_la_ventana(store):
+    c2 = _con_novedad(store); a = store.filas_reporte(c2)[0]["alerta_id"]
+    store.decidir([a], CONFIRMADA, "Alisson", AHORA)
+    store.decidir([a], PENDIENTE, "Alisson", AHORA + timedelta(hours=1))
+    assert store.registrar_decision(a, DESCARTADA, "Alisson", AHORA + timedelta(hours=2),
+                                    fecha_reporte=AHORA) == EXCEL_IGNORADA
+    assert store.registrar_decision(a, DESCARTADA, "Alisson", AHORA + timedelta(hours=2),
+                                    fecha_reporte=AHORA + timedelta(hours=1, minutes=5)) == EXCEL_APLICADA
+
+
+def test_excel_sin_fecha_no_pisa_una_alerta_con_historial(store):
+    c2 = _con_novedad(store); a = store.filas_reporte(c2)[0]["alerta_id"]
+    store.decidir([a], CONFIRMADA, "Alisson", AHORA); store.decidir([a], PENDIENTE, "Alisson", AHORA)
+    assert store.registrar_decision(a, DESCARTADA, "Alisson", AHORA, fecha_reporte=None) == EXCEL_IGNORADA
 
 
 def test_decision_invalida_lanza_error(store):
@@ -407,3 +423,105 @@ def test_la_migracion_se_repite_si_la_tabla_quedo_vacia_y_no_duplica(tmp_path):
     s2.con.close()
     s3 = Store(ruta)
     assert s3.con.execute("SELECT COUNT(*) FROM actuacion_radicado").fetchone()[0] == n
+
+
+def _dos_alertas(store):
+    c1 = store.iniciar_ciclo(AHORA)
+    store.registrar_resultado(c1, R.radicado, ok(act(1)), Veredicto(SIN_CAMBIO), "", AHORA)
+    store.cerrar_ciclo(c1, "Completo", AHORA)
+    c2 = store.iniciar_ciclo(AHORA)
+    n2, n3 = act(2, fecha="2026-06-01", texto="Memorial"), act(3, fecha="2026-06-02", texto="Auto")
+    store.registrar_resultado(
+        c2, R.radicado, ok(n2, n3, act(1)), Veredicto(POSIBLE_NOVEDAD, nuevas=(n2, n3)),
+        "2026-05-15: Al despacho", AHORA,
+    )
+    ids = [f["id"] for f in store.con.execute("SELECT id FROM alerta ORDER BY id")]
+    assert len(ids) == 2
+    return ids[0], ids[1]
+
+
+def test_decidir_en_bloque_cambia_estado_y_deja_historial(store):
+    ids = _dos_alertas(store)
+    assert store.decidir(ids, CONFIRMADA, "Alisson", AHORA) == 2
+    assert store.contar_pendientes() == 0
+    h = store.historial(ids[0])
+    assert [(x["estado_anterior"], x["estado_nuevo"], x["usuario"], x["origen"]) for x in h] == [
+        (PENDIENTE, CONFIRMADA, "Alisson", "ventana")]
+
+
+def test_corregir_y_volver_a_pendiente_acumula_historial(store):
+    (a, _) = _dos_alertas(store)
+    store.decidir([a], DESCARTADA, "Alisson", AHORA)
+    store.decidir([a], CONFIRMADA, "Alisson", AHORA + timedelta(minutes=1))
+    store.decidir([a], PENDIENTE, "Alisson", AHORA + timedelta(minutes=2))
+    assert [x["estado_nuevo"] for x in store.historial(a)] == [DESCARTADA, CONFIRMADA, PENDIENTE]
+    f = store.con.execute("SELECT estado, validada_por, validada_en FROM alerta WHERE id=?", (a,)).fetchone()
+    assert tuple(f) == (PENDIENTE, None, None)
+
+
+def test_decidir_al_mismo_estado_no_agrega_historial(store):
+    (a, _) = _dos_alertas(store)
+    store.decidir([a], DESCARTADA, "Alisson", AHORA)
+    assert store.decidir([a], DESCARTADA, "Alisson", AHORA) == 0
+    assert len(store.historial(a)) == 1
+
+
+def test_decidir_estado_invalido_lanza_error(store):
+    with pytest.raises(ValueError):
+        store.decidir([1], "Quizás", "Alisson", AHORA)
+
+
+def test_migracion_crea_historial_de_lo_ya_decidido_una_sola_vez(tmp_path):
+    ruta = tmp_path / "c.db"
+    s = Store(ruta); (a, _) = _dos_alertas(s)
+    s.con.execute("UPDATE alerta SET estado=?, validada_por='Ana', validada_en=? WHERE id=?", (DESCARTADA, AHORA.isoformat(), a))
+    s.con.execute("DELETE FROM decision"); s.con.commit(); s.con.close()   # simula base anterior al cambio
+    for _ in range(2):
+        s = Store(ruta)
+        assert [(x["estado_nuevo"], x["usuario"], x["origen"]) for x in s.historial(a)] == [(DESCARTADA, "Ana", "migracion")]
+        s.con.close()
+
+
+def test_obligacion_se_guarda_y_por_defecto_es_falsa(store):
+    assert store.obligacion_activa() is False
+    store.fijar_obligacion(True);  assert store.obligacion_activa() is True
+    store.fijar_obligacion(False); assert store.obligacion_activa() is False
+
+
+def test_alertas_pendientes_trae_fecha_de_deteccion_y_excluye_decididas(store):
+    (a, b) = _dos_alertas(store)
+    store.decidir([b], DESCARTADA, "Alisson", AHORA)
+    p = store.alertas_pendientes()
+    assert [x["id"] for x in p] == [a]
+    assert p[0]["detectada"].startswith(AHORA.date().isoformat())
+
+
+def test_alerta_sin_consulta_de_origen_usa_el_inicio_del_ciclo(store):
+    (a, _) = _dos_alertas(store)
+    store.con.execute("DELETE FROM consulta")
+    store.con.commit()
+    assert {x["id"] for x in store.alertas_pendientes()} >= {a}
+
+
+def test_alertas_decididas_filtra_por_estado(store):
+    (a, b) = _dos_alertas(store)
+    store.decidir([a], CONFIRMADA, "Alisson", AHORA)
+    store.decidir([b], DESCARTADA, "Alisson", AHORA)
+    assert [x["id"] for x in store.alertas_decididas(CONFIRMADA)] == [a]
+    assert len(store.alertas_decididas()) == 2
+
+
+def test_abrir_una_base_ya_migrada_no_pide_escribir(tmp_path):
+    import sqlite3
+
+    ruta = tmp_path / "c.db"
+    s = Store(ruta)
+    _con_novedad(s)
+    s.con.close()
+    otra = sqlite3.connect(ruta)
+    otra.execute("BEGIN IMMEDIATE")  # una consulta tiene la base para escribir
+    try:
+        Store(ruta).con.close()  # no espera ni falla: abrir solo lee
+    finally:
+        otra.rollback()
+        otra.close()

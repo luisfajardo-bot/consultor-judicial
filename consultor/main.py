@@ -17,7 +17,7 @@ from .loader import crear_fuente
 from .mantenimiento import archivar_reportes, borrar_archivo_antiguo, respaldar_base
 from .models import ERROR, FALLIDA, NO_VERIFICADO, Consulta, Veredicto
 from .reporter import LEYENDA, escribir_reporte, leer_decisiones
-from .store import Store
+from .store import EXCEL_APLICADA, EXCEL_IGNORADA, Store
 
 # R5 se evalúa solo después de esta cantidad de consultas, para que dos fallos
 # seguidos al inicio no detengan un ciclo de 44 radicados.
@@ -59,11 +59,19 @@ def correr_ciclo(
             "revisar la fuente y los filtros de estado."
         )
         return Resumen(0, 0, 0, 0, 0, "Lista vacía", None)
-    aplicadas = 0
-    for alerta_id, decision, usuario in leer_decisiones(carpeta_reportes, avisar_fn):
-        aplicadas += store.registrar_decision(alerta_id, decision, usuario or validador, ahora())
+    resultados = [
+        store.registrar_decision(alerta_id, decision, usuario or validador, ahora(), fecha)
+        for alerta_id, decision, usuario, fecha in leer_decisiones(carpeta_reportes, avisar_fn)
+    ]
+    aplicadas = resultados.count(EXCEL_APLICADA)
+    ignoradas = resultados.count(EXCEL_IGNORADA)
     if aplicadas:
         avisar_fn(f"Se registraron {aplicadas} decisión(es) tomadas en los reportes.")
+    if ignoradas:
+        avisar_fn(
+            f"{ignoradas} decisión(es) de reportes anteriores se ignoraron "
+            "porque la alerta se decidió después en la ventana."
+        )
 
     interrumpidos = store.cerrar_interrumpidos(ahora())
     if interrumpidos:

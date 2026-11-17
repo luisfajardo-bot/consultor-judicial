@@ -42,7 +42,27 @@ CREATE TABLE IF NOT EXISTS alerta (
     anterior TEXT, estado TEXT NOT NULL, validada_por TEXT, validada_en TEXT);
 CREATE INDEX IF NOT EXISTS ix_alerta_ciclo ON alerta(ciclo_id);
 CREATE INDEX IF NOT EXISTS ix_alerta_pendiente ON alerta(id) WHERE estado = 'Pendiente';
+CREATE TABLE IF NOT EXISTS decision (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alerta_id INTEGER NOT NULL,
+    estado_anterior TEXT NOT NULL,
+    estado_nuevo TEXT NOT NULL,
+    usuario TEXT NOT NULL,
+    momento TEXT NOT NULL,
+    origen TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_decision_alerta ON decision(alerta_id, id);
+CREATE TABLE IF NOT EXISTS estado_app (
+    clave TEXT PRIMARY KEY, valor TEXT NOT NULL);
 """
+
+ORIGEN_VENTANA = "ventana"
+ORIGEN_EXCEL = "excel"
+ORIGEN_MIGRACION = "migracion"
+
+EXCEL_APLICADA = "aplicada"
+EXCEL_IGNORADA = "ignorada"
+EXCEL_SIN_EFECTO = "sin_efecto"
+CLAVE_OBLIGACION = "obligacion_puesta_al_dia"
 
 CONSULTAS_SQL = """
 SELECT c.radicado, c.estado, c.resultado, c.motivo, c.hora,
@@ -71,6 +91,29 @@ JOIN radicado r ON r.radicado = a.radicado
 LEFT JOIN consulta c ON c.ciclo_id = a.ciclo_id AND c.radicado = a.radicado
 WHERE a.estado = 'Pendiente' AND a.ciclo_id <> ?
 ORDER BY a.id
+"""
+
+ALERTAS_PENDIENTES_SQL = """
+SELECT a.id, a.radicado, a.ciclo_id,
+       COALESCE(c.hora, ci.inicio) AS detectada,
+       t.fecha_actuacion, t.actuacion, t.anotacion,
+       COALESCE(NULLIF(c.despacho, ''), r.despacho, '') AS despacho
+FROM alerta a
+JOIN actuacion t ON t.id_reg_actuacion = a.id_reg_actuacion
+JOIN radicado r ON r.radicado = a.radicado
+JOIN ciclo ci ON ci.id = a.ciclo_id
+LEFT JOIN consulta c ON c.ciclo_id = a.ciclo_id AND c.radicado = a.radicado
+WHERE a.estado = 'Pendiente'
+ORDER BY detectada DESC, a.id DESC
+"""
+
+ALERTAS_DECIDIDAS_SQL = """
+SELECT a.id, a.radicado, a.estado, a.validada_por, a.validada_en,
+       t.fecha_actuacion, t.actuacion
+FROM alerta a
+JOIN actuacion t ON t.id_reg_actuacion = a.id_reg_actuacion
+WHERE a.estado <> 'Pendiente' {filtro}
+ORDER BY a.validada_en DESC, a.id DESC
 """
 
 
@@ -104,6 +147,21 @@ class Store:
         if "parcial" not in {f["name"] for f in self.con.execute("PRAGMA table_info(ciclo)")}:
             with self.con:
                 self.con.execute("ALTER TABLE ciclo ADD COLUMN parcial INTEGER NOT NULL DEFAULT 0")
+        sin_historial = self.con.execute(  # solo lee: abrir la base no espera a una consulta que escribe
+            "SELECT EXISTS (SELECT 1 FROM alerta a JOIN ciclo c ON c.id = a.ciclo_id WHERE a.estado <> ? "
+            "AND NOT EXISTS (SELECT 1 FROM decision d WHERE d.alerta_id = a.id))",
+            (PENDIENTE,),
+        ).fetchone()[0]
+        if sin_historial:  # alertas ya decididas antes del historial: una fila cada una, una sola vez
+            with self.con:
+                self.con.execute(
+                    "INSERT INTO decision (alerta_id, estado_anterior, estado_nuevo, usuario, momento, origen) "
+                    "SELECT a.id, ?, a.estado, COALESCE(a.validada_por, ''), "
+                    "COALESCE(a.validada_en, c.inicio), ? "
+                    "FROM alerta a JOIN ciclo c ON c.id = a.ciclo_id "
+                    "WHERE a.estado <> ? AND NOT EXISTS (SELECT 1 FROM decision d WHERE d.alerta_id = a.id)",
+                    (PENDIENTE, ORIGEN_MIGRACION, PENDIENTE),
+                )
 
     # ciclos
     def iniciar_ciclo(self, ahora: datetime, parcial: bool = False) -> int:
@@ -327,18 +385,81 @@ class Store:
             )
 
     def registrar_decision(
-        self, alerta_id: int, estado: str, usuario: str, ahora: datetime
-    ) -> bool:
-        """Única puerta de escritura de decisiones. Solo cambia alertas Pendiente."""
+        self,
+        alerta_id: int,
+        estado: str,
+        usuario: str,
+        ahora: datetime,
+        fecha_reporte: datetime | None = None,
+    ) -> str:
+        """Ruta del Excel. Solo cambia alertas Pendiente, y un reporte no pisa lo que se
+        decidió después en la ventana: si hay historial, el reporte debe ser posterior."""
         if estado not in (CONFIRMADA, DESCARTADA):
             raise ValueError(f"decisión inválida: {estado!r}")
+        actual = self.con.execute("SELECT estado FROM alerta WHERE id = ?", (alerta_id,)).fetchone()
+        if actual is None or actual["estado"] != PENDIENTE:
+            return EXCEL_SIN_EFECTO
+        ultimo = self.con.execute(
+            "SELECT momento FROM decision WHERE alerta_id = ? ORDER BY id DESC LIMIT 1",
+            (alerta_id,),
+        ).fetchone()
+        if ultimo is not None and (
+            fecha_reporte is None or fecha_reporte <= datetime.fromisoformat(ultimo["momento"])
+        ):
+            return EXCEL_IGNORADA
+        self.decidir([alerta_id], estado, usuario, ahora, ORIGEN_EXCEL)
+        return EXCEL_APLICADA
+
+    def decidir(
+        self,
+        alerta_ids: Iterable[int],
+        estado: str,
+        usuario: str,
+        ahora: datetime,
+        origen: str = ORIGEN_VENTANA,
+    ) -> int:
+        """Cambia el estado de varias alertas en una transacción y deja cada cambio en el historial."""
+        if estado not in (CONFIRMADA, DESCARTADA, PENDIENTE):
+            raise ValueError(f"decisión inválida: {estado!r}")
+        momento = _iso(ahora)
+        validador, validada_en = (None, None) if estado == PENDIENTE else (usuario, momento)
+        cambiadas = 0
         with self.con:
-            cur = self.con.execute(
-                "UPDATE alerta SET estado = ?, validada_por = ?, validada_en = ? "
-                "WHERE id = ? AND estado = ?",
-                (estado, usuario, _iso(ahora), alerta_id, PENDIENTE),
+            for alerta_id in alerta_ids:
+                f = self.con.execute("SELECT estado FROM alerta WHERE id = ?", (alerta_id,)).fetchone()
+                if f is None or f["estado"] == estado:
+                    continue
+                self.con.execute(
+                    "UPDATE alerta SET estado = ?, validada_por = ?, validada_en = ? WHERE id = ?",
+                    (estado, validador, validada_en, alerta_id),
+                )
+                self.con.execute(
+                    "INSERT INTO decision (alerta_id, estado_anterior, estado_nuevo, usuario, momento, origen) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (alerta_id, f["estado"], estado, usuario, momento, origen),
+                )
+                cambiadas += 1
+        return cambiadas
+
+    def historial(self, alerta_id: int) -> list[dict]:
+        filas = self.con.execute(
+            "SELECT estado_anterior, estado_nuevo, usuario, momento, origen "
+            "FROM decision WHERE alerta_id = ? ORDER BY id",
+            (alerta_id,),
+        )
+        return [dict(f) for f in filas]
+
+    def obligacion_activa(self) -> bool:
+        f = self.con.execute("SELECT valor FROM estado_app WHERE clave = ?", (CLAVE_OBLIGACION,)).fetchone()
+        return f is not None and f["valor"] == "1"
+
+    def fijar_obligacion(self, activa: bool) -> None:
+        with self.con:
+            self.con.execute(
+                "INSERT INTO estado_app (clave, valor) VALUES (?, ?) "
+                "ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor",
+                (CLAVE_OBLIGACION, "1" if activa else "0"),
             )
-        return cur.rowcount == 1
 
     # salida
     def resumen(self, ciclo_id: int) -> dict:
@@ -421,3 +542,13 @@ class Store:
                 }
             )
         return filas
+
+    def alertas_pendientes(self) -> list[dict]:
+        return [dict(f) for f in self.con.execute(ALERTAS_PENDIENTES_SQL)]
+
+    def alertas_decididas(self, estado: str | None = None) -> list[dict]:
+        if estado is None:
+            filas = self.con.execute(ALERTAS_DECIDIDAS_SQL.format(filtro=""))
+        else:
+            filas = self.con.execute(ALERTAS_DECIDIDAS_SQL.format(filtro="AND a.estado = ?"), (estado,))
+        return [dict(f) for f in filas]

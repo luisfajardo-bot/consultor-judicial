@@ -9,6 +9,9 @@
 - `consulta`: una por radicado y ciclo, con hora, resultado, motivo
 - `alerta`: radicado, actuación, ciclo, estado (Pendiente, Confirmada, Descartada), quién validó y cuándo. `id_reg_actuacion` es único, así que una actuación alerta una sola vez (R6)
 
+- `decision`: historial de cada cambio de estado de una alerta (`alerta_id`, `estado_anterior`, `estado_nuevo`, `usuario`, `momento`, `origen`: ventana, excel o migración). Solo se agregan filas. `alerta.estado` guarda el estado vigente.
+- `estado_app(clave, valor)`: estado de la aplicación; hoy guarda la obligación de la regla de puesta al día (`obligacion_puesta_al_dia`).
+
 Nada se borra (R8).
 
 ## Índices
@@ -19,7 +22,9 @@ No se usa el modo WAL: no es seguro si la carpeta queda en una unidad de red.
 ## Operaciones clave
 - `registrar_resultado`: guarda actuaciones, consulta y alertas **en una sola transacción**. Si el proceso se cae, no queda una actuación conocida sin su alerta.
 - `iniciar_ciclo`: continúa el ciclo En curso o Pausado del mismo día (reanudación). Los de días anteriores se marcan Interrumpido.
-- `registrar_decision(alerta_id, estado, usuario)`: **única puerta de escritura** de decisiones. Solo cambia alertas Pendiente, así que la primera decisión es la que cuenta. Una página web futura sería otro cliente de esta función.
+- `decidir(alerta_ids, estado, usuario, ahora, origen)`: la ventana decide y corrige en bloque (Confirmada, Descartada o vuelta a Pendiente). Actualiza `alerta` e inserta en `decision` en la misma transacción.
+- `registrar_decision(...)`: la ruta del Excel. Aplica solo si la alerta está Pendiente y el reporte es posterior al último cambio registrado en `decision`; así un Excel viejo no pisa una corrección de la ventana. Las ignoradas se cuentan y se avisan.
+- `alertas_pendientes`, `alertas_decididas`, `historial`, `obligacion_activa`, `fijar_obligacion`: lo que usa la ventana.
 - `filas_reporte`: arma el reporte de un ciclo e incluye las alertas Pendiente de ciclos anteriores.
 - `ultimo_cierre`, `ultimo_ciclo`, `contar_pendientes`: usadas por el límite entre ejecuciones y el [[panel y ventana]].
 

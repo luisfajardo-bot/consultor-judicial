@@ -101,13 +101,26 @@ def test_leer_decisiones_devuelve_solo_las_decididas(tmp_path):
     ruta = escribir(tmp_path, [novedad(alerta_id=7)])
     assert leer_decisiones(tmp_path) == []  # todo Pendiente
     marcar(ruta, "Confirmada", "Alisson Rengifo")
-    assert leer_decisiones(tmp_path) == [(7, "Confirmada", "Alisson Rengifo")]
+    assert leer_decisiones(tmp_path) == [(7, "Confirmada", "Alisson Rengifo", datetime(2026, 10, 12, 7, 0))]
+
+
+def test_sin_fila_fecha_en_resumen_la_fecha_es_none(tmp_path):
+    ruta = escribir(tmp_path, [novedad(alerta_id=7)])
+    marcar(ruta, "Confirmada", "Alisson Rengifo")
+    wb = load_workbook(ruta)
+    resumen = wb["Resumen"]
+    for f in resumen.iter_rows():
+        if f[0].value == "Fecha":
+            resumen.delete_rows(f[0].row)
+            break
+    wb.save(ruta)
+    assert leer_decisiones(tmp_path) == [(7, "Confirmada", "Alisson Rengifo", None)]
 
 
 def test_validador_en_blanco_se_devuelve_vacio(tmp_path):
     ruta = escribir(tmp_path, [novedad(alerta_id=7)])
     marcar(ruta, "Descartada", None)
-    assert leer_decisiones(tmp_path) == [(7, "Descartada", "")]
+    assert leer_decisiones(tmp_path) == [(7, "Descartada", "", datetime(2026, 10, 12, 7, 0))]
 
 
 def test_archivo_ilegible_avisa_y_sigue(tmp_path):
@@ -115,7 +128,7 @@ def test_archivo_ilegible_avisa_y_sigue(tmp_path):
     ruta = escribir(tmp_path, [novedad(alerta_id=7)])
     marcar(ruta, "Confirmada", "Alisson Rengifo")
     avisos = []
-    assert leer_decisiones(tmp_path, avisos.append) == [(7, "Confirmada", "Alisson Rengifo")]
+    assert leer_decisiones(tmp_path, avisos.append) == [(7, "Confirmada", "Alisson Rengifo", datetime(2026, 10, 12, 7, 0))]
     assert any("reporte_ciclo_0001" in a for a in avisos)
 
 
@@ -144,7 +157,7 @@ def test_id_de_alerta_invalido_se_avisa_y_no_descarta_las_demas_decisiones(tmp_p
     hoja.cell(row=2, column=enc.index("ID alerta") + 1, value="nota")
     wb.save(ruta)
     avisos = []
-    assert leer_decisiones(tmp_path, avisos.append) == [(8, "Descartada", "Alisson Rengifo")]
+    assert leer_decisiones(tmp_path, avisos.append) == [(8, "Descartada", "Alisson Rengifo", datetime(2026, 10, 12, 7, 0))]
     assert any("ID de alerta" in a for a in avisos)
 
 
@@ -175,7 +188,7 @@ def test_un_reporte_con_xml_dañado_se_avisa_y_no_tumba_la_lectura(tmp_path):
     _libro(malo, [[i, "Confirmada", "Ana"] for i in range(100, 300)])
     _dañar_xml(malo)
     avisos = []
-    assert leer_decisiones(tmp_path, avisos.append) == [(1, "Confirmada", "Ana")]
+    assert leer_decisiones(tmp_path, avisos.append) == [(1, "Confirmada", "Ana", None)]
     assert any("reporte_b.xlsx" in a for a in avisos)
 
 
