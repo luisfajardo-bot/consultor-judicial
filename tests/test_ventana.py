@@ -427,7 +427,7 @@ def test_el_detalle_muestra_la_fila_enfocada(raiz, tmp_path, monkeypatch):
     v = _ventana(raiz, cfg)
     v.tabla_rango.focus(str(ids[0]))
     v.mostrar_detalle()
-    texto = v.etiqueta_detalle.cget("text")
+    texto = v.texto_detalle()
     actuacion = v.tabla_rango.item(str(ids[0]), "values")[4]
     numero = actuacion.split()[-1]
     assert RADICADO in texto and "JUZGADO 077" in texto and actuacion in texto and f"Anotación {numero}" in texto
@@ -443,3 +443,25 @@ def test_abrir_en_el_portal_copia_el_radicado(raiz, tmp_path, monkeypatch):
     v.abrir_portal()
     assert abiertos == [ENLACE_PORTAL] and raiz.clipboard_get() == RADICADO
     assert v.etiqueta_alertas.cget("text") == "Radicado copiado"
+
+
+def test_la_ventana_cabe_en_una_pantalla_de_768_px(raiz, tmp_path, monkeypatch):
+    # 1366×768 con barra de tareas y título deja ~700 px; se reservan 25 px para el aviso rojo de la Task 6.
+    escala = raiz.tk.call("tk", "scaling")
+    raiz.tk.call("tk", "scaling", 1.33)  # = Windows al 100 %
+    try:
+        cfg = _cfg(tmp_path, monkeypatch)
+        ids = _con_alertas(cfg, hoy=8, hace_20_dias=3)
+        con = sqlite3.connect(cfg["salida"]["base_datos"])
+        with con:
+            con.execute("UPDATE actuacion SET anotacion = ?", ("Texto largo de la anotación. " * 40,))
+        con.close()
+        v = _ventana(raiz, cfg)
+        v.refrescar()
+        v.tabla_rango.focus(str(ids[0]))
+        v.mostrar_detalle()
+        raiz.update_idletasks()
+        assert "Texto largo" in v.texto_detalle()
+        assert raiz.winfo_reqheight() <= 700 - 25
+    finally:
+        raiz.tk.call("tk", "scaling", escala)

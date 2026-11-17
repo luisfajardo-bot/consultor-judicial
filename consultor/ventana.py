@@ -43,6 +43,8 @@ SIN_SELECCION = "Seleccione al menos una alerta."
 BASE_OCUPADA = "La base está ocupada por una consulta; intente de nuevo en unos segundos."
 RADICADO_COPIADO = "Radicado copiado"
 MAXIMO_SIN_PREGUNTAR = 5
+ANCHO_AYUDA = 900  # la ayuda en una línea: tabla y detalle ya ocupan ese ancho
+LINEAS_DETALLE = 5
 ESPERA_BASE_SEGUNDOS = 2  # lo que espera la ventana para escribir si una consulta tiene la base
 SIN_CARGAR = object()  # la lista aún no se pudo leer: sondear() reintenta
 MARCADA, SIN_MARCAR = "☑", "☐"
@@ -130,13 +132,9 @@ class Ventana:
         for b in (self.boton_consultar, self.boton_reporte, self.boton_cancelar, self.boton_encendido):
             b.bind("<Return>", lambda e: e.widget.invoke())
 
-        ttk.Label(
-            marco,
-            text="Días a revisar: avisar lo registrado en los últimos",
-            wraplength=520,
-        ).pack(anchor="w", pady=(16, 0))
-        ajuste = ttk.Frame(marco)
-        ajuste.pack(anchor="w")
+        ajuste = ttk.Frame(marco)  # en una sola línea: la ventana debe caber en pantallas de 768 px
+        ajuste.pack(anchor="w", pady=(8, 0))
+        ttk.Label(ajuste, text="Días a revisar: avisar lo registrado en los últimos").pack(side="left", padx=(0, 6))
         self.dias = tk.StringVar(value=str(leer_dias(self.carpeta_datos, self._dias_config())))
         self.campo_dias = ttk.Spinbox(
             ajuste, from_=0, to=DIAS_MAXIMO, width=4, textvariable=self.dias, command=self.guardar_dias
@@ -153,12 +151,13 @@ class Ventana:
 
     # alertas por decidir
     def _crear_alertas(self, marco):
-        self.pestanas = ttk.Notebook(marco)
+        ttk.Style(self.raiz).configure("Pestanas.TNotebook", padding=0)
+        self.pestanas = ttk.Notebook(marco, style="Pestanas.TNotebook", height=1)
         for _ in range(2):  # las pestañas solo eligen la lista; la tabla va debajo de la ayuda y los botones
             self.pestanas.add(ttk.Frame(self.pestanas, height=1))
-        self.pestanas.pack(anchor="w", fill="x", pady=(16, 0))
+        self.pestanas.pack(anchor="w", fill="x", pady=(8, 0))
         self.pestanas.bind("<<NotebookTabChanged>>", lambda e: self._pintar_pestana())
-        ttk.Label(marco, text=AYUDA, wraplength=520, justify="left").pack(anchor="w", pady=(4, 4))
+        ttk.Label(marco, text=AYUDA, wraplength=ANCHO_AYUDA, justify="left").pack(anchor="w", pady=(4, 4))
 
         botones = ttk.Frame(marco)
         botones.pack(anchor="w")
@@ -176,17 +175,25 @@ class Ventana:
         self.etiqueta_alertas = tk.Label(marco, text="", font=FUENTE, wraplength=520, justify="left", anchor="w")
         self.etiqueta_alertas.pack(anchor="w", fill="x", pady=(4, 0))
 
-        zona = ttk.Frame(marco)
+        zona = ttk.Frame(marco)  # tabla a la izquierda, detalle a la derecha: así cabe en 768 px de alto
         zona.pack(fill="both", expand=True)
-        self._zonas = [self._crear_tabla(zona), self._crear_tabla(zona)]
+        tablas = ttk.Frame(zona)
+        tablas.pack(side="left", fill="both", expand=True)
+        self._zonas = [self._crear_tabla(tablas), self._crear_tabla(tablas)]
         self.tabla_rango, self.tabla_anteriores = (tabla for _, tabla in self._zonas)
 
-        detalle = ttk.Frame(marco)
-        detalle.pack(anchor="w", fill="x", pady=(8, 0))
-        self.etiqueta_detalle = ttk.Label(detalle, text="", wraplength=520, justify="left")
-        self.etiqueta_detalle.pack(anchor="w")
+        detalle = ttk.Frame(zona)
+        detalle.pack(side="left", fill="y", padx=(8, 0))
+        # Text de alto fijo: una anotación larga se desplaza dentro del cuadro en vez de agrandar la ventana
+        self.etiqueta_detalle = tk.Text(
+            detalle, width=36, height=LINEAS_DETALLE, wrap="word", font=FUENTE, relief="flat", state="disabled"
+        )
+        barra = ttk.Scrollbar(detalle, orient="vertical", command=self.etiqueta_detalle.yview)
+        self.etiqueta_detalle.configure(yscrollcommand=barra.set)
         self.boton_portal = ttk.Button(detalle, text="Abrir en el portal", command=self.abrir_portal)
-        self.boton_portal.pack(anchor="w", pady=(4, 0))
+        self.boton_portal.pack(side="bottom", anchor="w", pady=(4, 0))
+        self.etiqueta_detalle.pack(side="left", fill="both", expand=True)
+        barra.pack(side="left", fill="y")
         self.boton_portal.bind("<Return>", lambda e: e.widget.invoke())
 
     def _crear_tabla(self, padre):
@@ -332,17 +339,19 @@ class Ventana:
 
     def mostrar_detalle(self) -> None:
         a = self._alerta_enfocada()
-        if a is None:
-            self.etiqueta_detalle.config(text="")
-            return
-        self.etiqueta_detalle.config(
-            text=(
-                f"{a['radicado']} · {a['despacho']}\n"
-                f"{a['fecha_actuacion']} · {a['actuacion']}\n"
-                f"Anotación: {a['anotacion'] or '—'}\n"
-                f"Detectada el {str(a['detectada'])[:16].replace('T', ' ')} (consulta {a['ciclo_id']})"
-            )
+        texto = "" if a is None else (
+            f"{a['radicado']} · {a['despacho']}\n"
+            f"{a['fecha_actuacion']} · {a['actuacion']}\n"
+            f"Anotación: {a['anotacion'] or '—'}\n"
+            f"Detectada el {str(a['detectada'])[:16].replace('T', ' ')} (consulta {a['ciclo_id']})"
         )
+        self.etiqueta_detalle.config(state="normal")
+        self.etiqueta_detalle.delete("1.0", "end")
+        self.etiqueta_detalle.insert("1.0", texto)
+        self.etiqueta_detalle.config(state="disabled")
+
+    def texto_detalle(self) -> str:
+        return self.etiqueta_detalle.get("1.0", "end-1c")
 
     def abrir_portal(self) -> None:
         webbrowser.open(ENLACE_PORTAL)  # el portal no admite enlace directo por radicado
