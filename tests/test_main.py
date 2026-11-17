@@ -113,19 +113,55 @@ def test_el_ciclo_avisa_las_decisiones_del_excel_ignoradas(tmp_path):
     assert store.historial(alerta_id)[-1]["estado_nuevo"] == "Pendiente"
 
 
-def test_r5_detiene_y_marca_el_resto_como_no_verificado(tmp_path):
+CAIDA = Consulta(FALLIDA, motivo="HTTP 503", falla_portal=True)
+NO_HALLADO = Consulta(FALLIDA, motivo="sin resultados: revisar el radicado en el portal", no_hallado=True)
+
+
+def test_portal_caido_espera_15_y_30_min_y_se_pausa_sin_registrar_lo_fallido(tmp_path):
     radicados = [Radicado(f"{i:023d}") for i in range(1, 13)]
-    caida = Consulta(FALLIDA, motivo="HTTP 503", falla_portal=True)
-    f = FetcherFalso({r.radicado: caida for r in radicados})
+    f = FetcherFalso({r.radicado: CAIDA for r in radicados})
     store, avisos = Store(":memory:"), []
     res = correr(tmp_path, radicados, f, store, Reloj(), avisos)
-    assert res.estado.startswith("Detenido")
-    assert len(f.llamadas) == 10 * (1 + main_mod.REINTENTOS_CAIDA)  # cada tanda de 10 se repite tras esperar
-    assert f.esperas == [main_mod.ESPERA_CAIDA] * main_mod.REINTENTOS_CAIDA
-    assert (res.total, res.exitosas, res.fallidas) == (12, 0, 12)
-    assert any("Fuente no disponible" in a for a in avisos)
-    motivos = [x["motivo"] for x in store.filas_reporte(res.ciclo_id)]
-    assert motivos.count(MOTIVO_DETENIDO) == 2
+    assert res.estado == main_mod.ESTADO_SIN_RESPUESTA
+    assert f.esperas == [900, 1800]
+    assert len(f.llamadas) == main_mod.FALLAS_SEGUIDAS * 3  # 5 seguidas bastan; se repiten tras cada espera
+    assert (res.total, res.exitosas, res.pendientes) == (5, 0, 12)  # las fallidas quedan en el reporte
+    assert any("Quedan 12 sin consultar" in a and "Vuelva a intentar en 1 hora" in a for a in avisos)
+
+
+def test_la_pausa_por_portal_caido_se_reanuda_el_mismo_dia_sin_repetir(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 13)]
+    store, reloj = Store(":memory:"), Reloj()
+    f = FetcherFalso({r.radicado: ok(act(1)) if r in rs[:3] else CAIDA for r in rs})
+    r1 = correr(tmp_path, rs, f, store, reloj)
+    assert (r1.estado, r1.exitosas, r1.pendientes) == (main_mod.ESTADO_SIN_RESPUESTA, 3, 9)
+    f2 = FetcherFalso({r.radicado: ok(act(1)) for r in rs})
+    r2 = correr(tmp_path, rs, f2, store, reloj)
+    assert (r2.ciclo_id, r2.estado, r2.total) == (r1.ciclo_id, "Completo", 12)
+    assert f2.llamadas == [r.radicado for r in rs[3:]]
+
+
+def test_una_caida_a_mitad_de_ciclo_se_detecta_por_fallas_seguidas(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 31)]
+    f = FetcherFalso({r.radicado: ok(act(1)) if r in rs[:20] else CAIDA for r in rs})
+    res = correr(tmp_path, rs, f, Store(":memory:"), Reloj())  # R5 sola no llega: 10 de 30
+    assert (res.estado, res.exitosas, res.pendientes) == (main_mod.ESTADO_SIN_RESPUESTA, 20, 10)
+
+
+def test_un_radicado_no_hallado_no_cuenta_como_caida(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 13)]
+    f = FetcherFalso({r.radicado: NO_HALLADO if r in rs[:5] else ok(act(1)) for r in rs})
+    res = correr(tmp_path, rs, f, Store(":memory:"), Reloj())
+    assert res.estado == "Completo" and f.esperas == []
+    assert (res.exitosas, res.fallidas) == (7, 5)
+
+
+def test_si_casi_ningun_radicado_aparece_alerta_cambio_de_api(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 13)]
+    avisos = []
+    res = correr(tmp_path, rs, FetcherFalso({r.radicado: NO_HALLADO for r in rs}), Store(":memory:"), Reloj(), avisos)
+    assert res.estado == "Completo con alerta: posible cambio en la API"
+    assert any("no encontró 12 de 12" in a for a in avisos)
 
 
 def test_r5_si_el_portal_vuelve_tras_esperar_el_ciclo_se_completa(tmp_path):
@@ -141,8 +177,8 @@ def test_r5_si_el_portal_vuelve_tras_esperar_el_ciclo_se_completa(tmp_path):
     store, avisos = Store(":memory:"), []
     res = correr(tmp_path, radicados, f, store, Reloj(), avisos)
     assert res.estado == "Completo"
-    assert (res.total, res.exitosas, res.fallidas) == (12, 12, 0)  # las 10 fallidas se reintentaron
-    assert f.esperas == [main_mod.ESPERA_CAIDA]
+    assert (res.total, res.exitosas, res.fallidas) == (12, 12, 0)  # las fallidas se reintentaron
+    assert f.esperas == [main_mod.ESPERAS_CAIDA[0]]
     assert any("Esperando" in a for a in avisos)
 
 
@@ -241,8 +277,11 @@ def test_un_error_de_forma_cierra_con_alerta_de_cambio_en_la_api(tmp_path):
 def test_muchos_errores_de_forma_detienen_con_alerta_de_api(tmp_path):
     rs = [Radicado(f"{i:023d}") for i in range(1, 13)]
     avisos = []
-    res = correr(tmp_path, rs, FetcherFalso({r.radicado: FORMA_ROTA for r in rs}), Store(":memory:"), Reloj(), avisos)
+    store = Store(":memory:")
+    res = correr(tmp_path, rs, FetcherFalso({r.radicado: FORMA_ROTA for r in rs}), store, Reloj(), avisos)
     assert res.estado == "Detenido: posible cambio en la API"
+    motivos = [x["motivo"] for x in store.filas_reporte(res.ciclo_id)]
+    assert motivos.count(MOTIVO_DETENIDO) == 2  # un cambio de la API no espera: el resto queda sin verificar
     assert any("posiblemente cambió" in a for a in avisos)
 
 
@@ -362,17 +401,9 @@ def test_un_bloqueo_detiene_el_ciclo_avisa_y_deja_pendientes(tmp_path):
     assert len(alerta) == 1 and "Quedan 3" in alerta[0]
     assert alerta[0] == (
         "ALERTA: el portal bloqueó las consultas (HTTP 403 o 429) después de 2 radicados. "
-        "Quedan 3 sin consultar. La próxima ejecución continuará desde ahí; espere al menos 30 minutos."
+        f"Quedan 3 sin consultar. {main_mod.PROTOCOLO}"
     )
     assert not any("Fuente no disponible" in a for a in avisos)
-
-
-def test_el_minimo_de_minutos_se_incluye_en_el_aviso(tmp_path):
-    rs, avisos = cinco(), []
-    correr_ciclo(
-        rs, con_bloqueo_en_el_tercero(rs), Store(":memory:"), tmp_path, "A", 0.5, avisos.append, Reloj(), min_minutos=45
-    )
-    assert any("al menos 45 minutos" in a for a in avisos)
 
 
 def test_tras_un_bloqueo_se_reanuda_solo_con_los_pendientes(tmp_path):
@@ -850,3 +881,67 @@ def test_con_las_consultas_apagadas_no_se_consulta_ni_con_forzar(tmp_path, monke
     assert not (tmp_path / "datos" / "c.db").exists()  # ni siquiera abrió la base
     guardar_activas(tmp_path / "datos", True)
     assert main_mod.ejecutar(args) == 0
+
+
+def test_una_pausa_le_dice_a_la_ventana_que_hacer(tmp_path, monkeypatch):
+    args = preparar(tmp_path, monkeypatch)
+
+    class Bloqueado:
+        def __init__(self, **k):
+            pass
+
+        def consultar(self, r):
+            return Consulta(FALLIDA, motivo="HTTP 403", falla_portal=True, bloqueo=True)
+
+        def pausar(self):
+            pass
+
+    monkeypatch.setattr(main_mod, "Fetcher", Bloqueado)
+    e = main_mod.ejecutar_ciclo(main_mod.cargar_config(args[args.index("--config") + 1]))
+    assert e.codigo == 1
+    assert e.mensaje == f"{main_mod.ESTADO_PAUSADO}. {main_mod.PROTOCOLO}"
+
+
+class CanceladoAlEsperar(FetcherFalso):
+    def esperar(self, segundos):
+        raise CicloCancelado()
+
+
+def test_cancelar_durante_la_espera_de_caida_y_reanudar_reintenta_lo_fallido(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 13)]
+    store, reloj = Store(":memory:"), Reloj()
+    r1 = correr(tmp_path, rs, CanceladoAlEsperar({r.radicado: ok(act(1)) if r in rs[:3] else CAIDA for r in rs}), store, reloj)
+    assert (r1.estado, r1.pendientes) == (main_mod.ESTADO_CANCELADO, 9)
+    f2 = FetcherFalso({r.radicado: ok(act(1)) for r in rs})
+    r2 = correr(tmp_path, rs, f2, store, reloj)
+    assert (r2.estado, r2.exitosas) == ("Completo", 12)
+    assert f2.llamadas == [r.radicado for r in rs[3:]]  # las 5 caídas también, no solo lo no consultado
+
+
+def test_un_bloqueo_tras_algunas_caidas_reanuda_tambien_las_caidas(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 13)]
+    store, reloj = Store(":memory:"), Reloj()
+    resp = {r.radicado: ok(act(1)) for r in rs[:3]} | {r.radicado: CAIDA for r in rs[3:5]} | {r.radicado: BLOQUEO for r in rs[5:]}
+    assert correr(tmp_path, rs, FetcherFalso(resp), store, reloj).estado == ESTADO_PAUSADO
+    f2 = FetcherFalso({r.radicado: ok(act(1)) for r in rs})
+    assert correr(tmp_path, rs, f2, store, reloj).estado == "Completo"
+    assert f2.llamadas == [r.radicado for r in rs[3:]]
+
+
+def test_un_error_de_forma_suelto_no_apaga_la_espera_por_caida(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 31)]
+    resp = {r.radicado: ok(act(1)) if r in rs[:15] else CAIDA for r in rs}
+    resp[rs[1].radicado] = FORMA_ROTA
+    f = FetcherFalso(resp)
+    res = correr(tmp_path, rs, f, Store(":memory:"), Reloj())
+    assert res.estado == main_mod.ESTADO_SIN_RESPUESTA and f.esperas == [900, 1800]
+
+
+def test_una_caida_de_varios_dias_no_pierde_la_ventana_del_primer_intento(tmp_path):
+    rs = [Radicado(f"{i:023d}") for i in range(1, 6)]  # radicados nuevos, 2026-10-12
+    store, reloj = Store(":memory:"), Reloj()
+    assert correr(tmp_path, rs, FetcherFalso({r.radicado: CAIDA for r in rs}), store, reloj).estado == main_mod.ESTADO_SIN_RESPUESTA
+    reloj.avanzar(10)  # 2026-10-22: lo del 13-oct ya es más viejo que 7 días desde hoy, no desde el primer intento
+    f = FetcherFalso({r.radicado: ok(act(n, fecha="2026-10-13", registro="2026-10-13")) for n, r in enumerate(rs, 1)})
+    r = correr_ciclo(rs, f, store, tmp_path, "Alisson Rengifo", 0.5, [].append, reloj, alertar_primera_dias=7)
+    assert r.novedades == 5

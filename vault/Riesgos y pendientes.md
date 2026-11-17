@@ -1,6 +1,6 @@
 # Riesgos y pendientes
 
-Actualizado el 2026-10-13. El ciclo de referencia terminó a las 9:27: 34 radicados con referencia, 7 con radicado inválido, 0 alertas.
+Actualizado el 2026-11-17 (protocolo de portal caído). Antes, el 2026-10-13. El ciclo de referencia terminó a las 9:27: 34 radicados con referencia, 7 con radicado inválido, 0 alertas.
 
 ## Pendientes
 
@@ -11,7 +11,8 @@ Actualizado el 2026-10-13. El ciclo de referencia terminó a las 9:27: 34 radica
 | Carpeta de red para las copias de la base | Sistemas | Sin definir. Hoy están en el mismo equipo |
 | Cuenta de GitHub para el repositorio | Luis | Por confirmar si es corporativa |
 | Plazo de conservación de los reportes archivados | Gerencia Jurídica | Sin decidir. El borrado está apagado |
-| Protocolo de contingencia por portal caído | Núcleo Técnico redacta, Gerencia Jurídica aprueba | Pendiente |
+| Protocolo de contingencia por portal caído | Núcleo Técnico redacta, Gerencia Jurídica aprueba | Redactado el 2026-11-17 (README, "Si el portal falla"). Falta aprobación |
+| Verificar dos radicados que el portal nunca encuentra: `11001400304720160084400` y `73055408900120240010100` (todos los ciclos desde el 22-oct) | Alisson | Pendiente |
 | Línea base de tiempos manuales de Alisson. La spec (campo 12) trae una base preliminar de la Gerencia Jurídica (sep-2026): ~2 h por ciclo, 2 ciclos por semana, ~4 h semanales. Falta validarla con el formato de la Semana 1 (fecha, hora inicio/fin, procesos, portal, novedades, minutos de actualización del cuadro). El tiempo de la herramienta no se mide aparte: sale de `ciclo.inicio` y `ciclo.fin`, o con cronómetro | Alisson | Parcial |
 | Responsable técnico que mantiene el código | Núcleo Técnico | Por confirmar |
 | Canal de alertas (correo o Teams) | Sistemas | Aplazado, ver [[Fase de escalamiento]] |
@@ -39,7 +40,8 @@ Nota: la ventana de la primera consulta se ancla al primer intento del radicado,
 
 ## Limitaciones conocidas
 
-- Una decisión corregida en el Excel se ignora: cuenta solo la primera.
+- Una decisión se corrige desde la ventana (Ver decididas). En el Excel solo cuenta la de una alerta Pendiente y un reporte viejo no pisa lo corregido después.
+- Un ciclo pausado se reanuda solo el mismo día; al día siguiente queda Interrumpido y se empieza de cero.
 - Una consulta de un solo radicado no se reanuda como ciclo completo.
 - Las alertas pendientes reaparecen en cada reporte hasta que Alisson las decide.
 

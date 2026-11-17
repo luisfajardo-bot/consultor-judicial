@@ -196,9 +196,9 @@ class Store:
         return cur.rowcount
 
     def pendientes(self, ciclo_id: int, total: int) -> int:
-        """Radicados de la lista que aún no tienen consulta registrada en el ciclo."""
+        """Radicados de la lista sin consulta exitosa en el ciclo: lo fallido también se reintenta."""
         n = self.con.execute(
-            "SELECT COUNT(*) FROM consulta WHERE ciclo_id = ?", (ciclo_id,)
+            "SELECT COUNT(*) FROM consulta WHERE ciclo_id = ? AND estado = ?", (ciclo_id, EXITOSA)
         ).fetchone()[0]
         return total - n
 
@@ -246,23 +246,14 @@ class Store:
             )
 
     def ya_consultado(self, ciclo_id: int, radicado: str) -> bool:
+        """Solo lo exitoso: al reanudar o tras esperar una caída, lo fallido se vuelve a consultar."""
         return (
             self.con.execute(
-                "SELECT 1 FROM consulta WHERE ciclo_id = ? AND radicado = ?",
-                (ciclo_id, radicado),
+                "SELECT 1 FROM consulta WHERE ciclo_id = ? AND radicado = ? AND estado = ?",
+                (ciclo_id, radicado, EXITOSA),
             ).fetchone()
             is not None
         )
-
-    def descartar_fallidas(self, ciclo_id: int) -> None:
-        """Borra lo no exitoso del ciclo para que se vuelva a consultar.
-
-        ponytail: primer_intento se corre a la hora del reintento; solo importa si cruza la medianoche.
-        """
-        with self.con:
-            self.con.execute(
-                "DELETE FROM consulta WHERE ciclo_id = ? AND estado != ?", (ciclo_id, EXITOSA)
-            )
 
     def ids_conocidos(self, radicado: str) -> set[int]:
         filas = self.con.execute(
@@ -361,6 +352,10 @@ class Store:
                         "UPDATE radicado SET id_proceso = ? WHERE radicado = ?",
                         (consulta.id_proceso, radicado),
                     )
+            self.con.execute(  # un reintento reemplaza la fallida del mismo ciclo; las de otros días quedan
+                "DELETE FROM consulta WHERE ciclo_id = ? AND radicado = ? AND estado <> ?",
+                (ciclo_id, radicado, EXITOSA),
+            )
             self.con.execute(
                 "INSERT INTO consulta (ciclo_id, radicado, hora, estado, resultado, "
                 "motivo, despacho, ultima_actualizacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

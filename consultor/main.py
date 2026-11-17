@@ -22,12 +22,18 @@ from .store import EXCEL_APLICADA, EXCEL_IGNORADA, Store
 # R5 se evalúa solo después de esta cantidad de consultas, para que dos fallos
 # seguidos al inicio no detengan un ciclo de 44 radicados.
 MIN_MUESTRA = 10
-# Si R5 se dispara, el ciclo espera y reintenta lo fallido antes de darse por vencido.
-ESPERA_CAIDA = 600
-REINTENTOS_CAIDA = 2
+# Una caída a mitad de ciclo se reconoce por fallas seguidas, aunque R5 (que mira todo el ciclo) no llegue.
+FALLAS_SEGUIDAS = 5
+# Ante una caída el ciclo espera y reintenta lo fallido antes de pausarse. La del 14-oct duró ~35 min.
+ESPERAS_CAIDA = (900, 1800)
 MOTIVO_DETENIDO = "ciclo detenido: fuente no disponible"
 ESTADO_CANCELADO = "Cancelado por el usuario"
 ESTADO_PAUSADO = "Pausado: el portal bloqueó las consultas"
+ESTADO_SIN_RESPUESTA = "Pausado: el portal no responde"
+PROTOCOLO = (
+    "Vuelva a intentar en 1 hora: seguirá desde donde quedó. "
+    "Si vuelve a fallar, haga hoy la consulta manual y avise a quien administra la herramienta."
+)
 
 
 @dataclass
@@ -51,7 +57,7 @@ def _desde(primer_intento, ahora: datetime, dias: int) -> str:
 
 
 def correr_ciclo(
-    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, min_minutos=30, cancelado=None, alertar_primera_dias=0
+    radicados, fetcher, store, carpeta_reportes, validador, max_fallas, avisar_fn, ahora=datetime.now, progreso=None, parcial=False, cancelado=None, alertar_primera_dias=0
 ) -> Resumen:
     if not radicados:
         avisar_fn(
@@ -77,8 +83,8 @@ def correr_ciclo(
     if interrumpidos:
         avisar_fn(f"{interrumpidos} ciclo(s) anterior(es) quedaron interrumpido(s). Sus alertas pendientes siguen en el reporte.")
     ciclo_id = store.iniciar_ciclo(ahora(), parcial)
-    consultados = fallas = cambios_api = 0
-    detenido = bloqueado = cancelo = False
+    consultados = fallas = cambios_api = no_hallados = seguidas = 0
+    detenido = bloqueado = cancelo = sin_respuesta = False
     ultimo = len(radicados) - 1
     caidas = 0
     store.registrar_radicados(radicados)
@@ -122,8 +128,7 @@ def correr_ciclo(
                 avisar_fn(
                     "ALERTA: el portal bloqueó las consultas (HTTP 403 o 429) después de "
                     f"{len(radicados) - pendientes} radicados. Quedan {pendientes} sin consultar. "
-                    "La próxima ejecución continuará desde ahí; "
-                    f"espere al menos {min_minutos} minutos."
+                    f"{PROTOCOLO}"
                 )
                 break
             desde = _desde(store.primer_intento(r.radicado), ahora(), alertar_primera_dias)
@@ -138,23 +143,35 @@ def correr_ciclo(
             )
             consultados += 1
             fallas += consulta.falla_portal
+            seguidas = seguidas + 1 if consulta.falla_portal else 0
             cambios_api += consulta.estado == ERROR
-            if consultados >= MIN_MUESTRA and fallas / consultados > max_fallas:  # R5
-                if caidas < REINTENTOS_CAIDA and not cambios_api:  # un cambio de la API no se arregla esperando
+            no_hallados += consulta.no_hallado
+            r5 = consultados >= MIN_MUESTRA and fallas / consultados > max_fallas
+            api_rota = cambios_api * 2 > fallas  # un ERROR suelto en plena caída no apaga la espera
+            if (r5 or seguidas >= FALLAS_SEGUIDAS) and not api_rota:  # un cambio de la API no se arregla esperando
+                if caidas < len(ESPERAS_CAIDA):
+                    espera = ESPERAS_CAIDA[caidas]
                     caidas += 1
                     avisar_fn(
                         f"El portal no responde: fallaron {fallas} de {consultados} consultas. "
-                        f"Esperando {ESPERA_CAIDA // 60} min para reintentar ({caidas} de {REINTENTOS_CAIDA})."
+                        f"Esperando {espera // 60} min para reintentar ({caidas} de {len(ESPERAS_CAIDA)})."
                     )
                     try:
-                        fetcher.esperar(ESPERA_CAIDA)
+                        fetcher.esperar(espera)
                     except CicloCancelado:
                         cancelo = True
                         avisar_cancelado()
                         break
-                    store.descartar_fallidas(ciclo_id)
-                    i = consultados = fallas = cambios_api = 0  # vuelve al inicio: lo exitoso se salta
+                    i = consultados = fallas = cambios_api = no_hallados = seguidas = 0  # lo exitoso se salta
                     continue
+                sin_respuesta = True  # lo fallido queda en el reporte y se vuelve a consultar al reanudar
+                pendientes = store.pendientes(ciclo_id, len(radicados))
+                avisar_fn(
+                    f"El portal no responde: fallaron {fallas} de {consultados} consultas, también después de "
+                    f"esperar {sum(ESPERAS_CAIDA) // 60} min. Quedan {pendientes} sin consultar. {PROTOCOLO}"
+                )
+                break
+            if r5:  # con cambio de la API: se detiene sin esperar
                 detenido = True
                 avisar_fn(
                     f"Fuente no disponible: fallaron {fallas} de {consultados} consultas. "
@@ -166,6 +183,12 @@ def correr_ciclo(
             progreso(i, len(radicados), r.radicado)
 
     fuente_caida = consultados > 0 and fallas / consultados > max_fallas
+    muchos_no_hallados = consultados >= MIN_MUESTRA and no_hallados / consultados > max_fallas
+    if muchos_no_hallados:  # que casi ningún radicado exista apunta a la API, no a la lista
+        avisar_fn(
+            f"ALERTA: el portal no encontró {no_hallados} de {consultados} radicados; la API posiblemente cambió. "
+            "Revisar la herramienta y usar la consulta manual mientras tanto."
+        )
     if cambios_api:
         avisar_fn(
             f"ALERTA: la API de la Rama Judicial posiblemente cambió. {cambios_api} de {consultados} "
@@ -176,11 +199,11 @@ def correr_ciclo(
         estado = ESTADO_CANCELADO
     elif bloqueado:
         estado = ESTADO_PAUSADO
-    elif detenido and cambios_api:
+    elif sin_respuesta:
+        estado = ESTADO_SIN_RESPUESTA
+    elif detenido:  # solo se detiene sin esperar si cambió la API
         estado = "Detenido: posible cambio en la API"
-    elif detenido:
-        estado = "Detenido: fuente no disponible"
-    elif cambios_api:
+    elif cambios_api or muchos_no_hallados:
         estado = "Completo con alerta: posible cambio en la API"
     elif fuente_caida:
         estado = "Completo con fallas de la fuente"
@@ -191,7 +214,7 @@ def correr_ciclo(
     else:
         estado = "Completo"
     res = store.resumen(ciclo_id)
-    pendientes = store.pendientes(ciclo_id, len(radicados)) if bloqueado or cancelo else 0
+    pendientes = store.pendientes(ciclo_id, len(radicados)) if bloqueado or cancelo or sin_respuesta else 0
     ruta = escribir_reporte(
         store.filas_reporte(ciclo_id),
         {**res, "estado": estado, "pendientes": pendientes},
@@ -316,6 +339,7 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                 reintentos_bloqueo=portal.get("reintentos_bloqueo", 3),
                 espera_bloqueo=portal.get("espera_bloqueo_segundos", 60),
                 cancelado=cancelado,
+                avisar=lambda t: _registrar(t, log),  # solo al log: es para medir la cuota, no para la persona
             )
 
             def avance(hecho, total, radicado):
@@ -333,7 +357,6 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
                 aviso,
                 progreso=avance,
                 parcial=bool(solo_radicado),
-                min_minutos=minimo,
                 cancelado=cancelado,
                 alertar_primera_dias=leer_dias(
                     Path(cfg["salida"]["base_datos"]).parent,
@@ -353,7 +376,8 @@ def ejecutar_ciclo(cfg, *, forzar=False, solo_radicado=None, progreso=None, avis
         msg = "El ciclo terminó con un error inesperado:\n" + traceback.format_exc()
         aviso(msg)
         return Ejecucion(2, msg, None)
-    return Ejecucion(0 if res.estado == "Completo" else 1, "", res)
+    mensaje = f"{res.estado}. {PROTOCOLO}" if res.estado.startswith("Pausado") else ""  # la ventana dice qué hacer
+    return Ejecucion(0 if res.estado == "Completo" else 1, mensaje, res)
 
 
 def ejecutar(argv=None) -> int:

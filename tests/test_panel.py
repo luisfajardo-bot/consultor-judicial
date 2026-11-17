@@ -179,6 +179,7 @@ def test_config_alertas_convierte_tipos():
         ({"dias_corte_regla": -3, "umbral_anteriores": 50}, ConfigAlertas(umbral=50)),
         ({"dias_corte_regla": 2.5}, ConfigAlertas()),
         ({"objetivo_anteriores": 40}, ConfigAlertas()),  # objetivo > umbral: los dos por defecto
+        ({"objetivo_anteriores": 0}, ConfigAlertas()),  # "menos de 0" nunca se cumpliría
         ({"umbral_anteriores": 5, "objetivo_anteriores": 8}, ConfigAlertas()),
         ({"umbral_anteriores": True}, ConfigAlertas()),
         ({"exigir_puesta_al_dia": "false"}, ConfigAlertas()),

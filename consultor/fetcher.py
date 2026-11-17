@@ -9,11 +9,16 @@ from .models import ERROR, EXITOSA, FALLIDA, Actuacion, Consulta, Radicado
 BASE = "https://consultaprocesos.ramajudicial.gov.co:448/api/v2"
 USER_AGENT = "ConsultorJudicial/1.0 (Gerencia Juridica; consulta de procesos propios)"
 MAX_PAGINAS = 20
+REVISAR_RADICADO = "revisar el radicado en el portal"
 RADICADO_RE = re.compile(r"[0-9]{23}")
 
 
 class ErrorPortal(Exception):
     """El portal no respondió bien tras agotar los reintentos."""
+
+
+class NoHallado(Exception):
+    """El portal responde, pero no tiene el proceso o sus actuaciones: es del radicado, no una caída."""
 
 
 class CicloCancelado(Exception):
@@ -80,6 +85,7 @@ class Fetcher:
         reintentos_bloqueo=2,
         espera_bloqueo=30.0,
         cancelado=None,
+        avisar=None,
     ):
         if sesion is None:
             sesion = requests.Session()
@@ -95,6 +101,7 @@ class Fetcher:
         self.reintentos_bloqueo = reintentos_bloqueo
         self.espera_bloqueo = espera_bloqueo
         self.cancelado = cancelado
+        self.avisar = avisar  # deja rastro de cada espera por cuota (403/429)
         self._hubo_peticion = False
 
     def _dormir(self, segundos) -> None:
@@ -137,7 +144,10 @@ class Fetcher:
                 if resp.status_code in (403, 429):
                     if bloqueos >= self.reintentos_bloqueo:
                         raise BloqueoPortal(resp.status_code)
-                    self._dormir(self.espera_bloqueo * (2**bloqueos))
+                    espera = self.espera_bloqueo * (2**bloqueos)
+                    if self.avisar:
+                        self.avisar(f"El portal pidió esperar (HTTP {resp.status_code}): pausa de {espera:.0f} s.")
+                    self._dormir(espera)
                     bloqueos += 1
                     continue
                 if resp.status_code == 404:
@@ -167,7 +177,9 @@ class Fetcher:
             )
             if estado == 404:
                 if pagina == 1 and not _sin_actuaciones(datos):
-                    raise ErrorPortal("404 inesperado al pedir actuaciones")
+                    if datos is None:  # ilegible: puede ser un proxy en plena caída, no el portal contestando
+                        raise ErrorPortal("404 ilegible al pedir actuaciones")
+                    raise NoHallado("404 inesperado al pedir actuaciones")
                 break
             lista = datos["actuaciones"]
             if not lista:
@@ -209,11 +221,11 @@ class Fetcher:
                 f"{BASE}/Procesos/Consulta/NumeroRadicacion",
                 {"numero": r.radicado, "SoloActivos": "false", "pagina": 1},
             )
-            if estado == 404:
-                return Consulta(FALLIDA, motivo="sin resultados", falla_portal=True)
-            procesos = datos["procesos"]  # sin .get: una clave renombrada debe ser ERROR
+            if estado == 404 and datos is None:
+                raise ErrorPortal("404 ilegible al buscar el radicado")
+            procesos = [] if estado == 404 else datos["procesos"]  # sin .get: una clave renombrada debe ser ERROR
             if not procesos:
-                return Consulta(FALLIDA, motivo="sin resultados", falla_portal=True)
+                raise NoHallado("sin resultados")
             primero = procesos[0]
             id_proceso = primero["idProceso"]
             vistas: dict[int, Actuacion] = {}
@@ -229,6 +241,8 @@ class Fetcher:
                 ),
                 actuaciones=tuple(vistas.values()),
             )
+        except NoHallado as e:
+            return Consulta(FALLIDA, motivo=f"{e}: {REVISAR_RADICADO}", no_hallado=True)
         except BloqueoPortal as e:
             return Consulta(
                 FALLIDA,

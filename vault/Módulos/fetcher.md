@@ -13,13 +13,14 @@
 - Pausa de 1,5 s entre peticiones (`pausa_peticiones_segundos`).
 - Errores de red o HTTP: 3 reintentos con espera creciente.
 - 403 o 429: es el bloqueo por cuota. Espera 60, 120 y 240 s y reintenta. Si persiste, devuelve `bloqueo=True` y [[main]] pausa el ciclo. Ver [[Operación y límites del portal]].
-- Un 404 solo es "sin actuaciones" si el cuerpo trae el mensaje `No se encontraron Actuaciones`. Cualquier otro 404 es falla del portal.
+- Un 404 solo es "sin actuaciones" si el cuerpo trae el mensaje `No se encontraron Actuaciones`. Otro 404 con JSON es "no hallado" (el portal contestó: es del radicado). Un 404 ilegible es falla del portal.
+- Cada espera por cuota se anota en `avisos.log` (parámetro `avisar`), para medir cuántas veces se toca la cuota.
 
 ## Resultados
 | Estado | Cuándo |
 |---|---|
 | Exitosa | Respuesta correcta, con o sin actuaciones |
-| Fallida | Radicado inválido (no cuenta para R5), sin resultados o portal caído (cuentan) |
+| Fallida | Radicado inválido o no hallado (`no_hallado`, motivo "revisar el radicado en el portal"): no cuentan como caída. Portal caído (`falla_portal`): cuenta |
 | Error | La respuesta llegó con forma inesperada, incluida una clave renombrada. Dispara la alerta de posible cambio en la API |
 
 ## Privacidad

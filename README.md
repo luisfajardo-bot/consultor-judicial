@@ -66,7 +66,7 @@ Doble clic en `scripts\ejecutar_ahora.bat`. Se ve una barra de avance con el rad
 
 - Si ya hay una consulta en curso (por ejemplo, otra persona desde su equipo), el programa lo dice, muestra su avance y no hace nada: el candado impide dos ciclos a la vez.
 - Si la última consulta terminó hace menos de 30 minutos, el programa lo dice y no hace nada, para no repetir consultas al portal. El límite se cambia en `config.toml`, sección `[ejecucion]`, con `min_minutos_entre_ciclos` (0 lo desactiva). Quien administra la herramienta puede saltarlo con `--forzar`.
-- Código de salida 3: no se ejecutó por candado o por el límite. Los demás: 0 completo, 1 detenido o con fallas, 2 error inesperado.
+- Código de salida 3: no se ejecutó por candado o por el límite. Los demás: 0 completo, 1 pausado, detenido o con fallas, 2 error inesperado.
 
 ## Pantalla
 
@@ -77,7 +77,7 @@ Doble clic en `scripts\abrir_panel.bat`. Se abre una ventana que muestra:
 - El botón **Consultar ahora**, que lanza una consulta con las mismas reglas de siempre.
 - El botón **Abrir último reporte**, que abre el Excel más reciente.
 - El botón **Cancelar**, activo solo mientras hay una consulta en curso. Pide confirmación y detiene la consulta al terminar el radicado actual. Lo ya consultado se conserva y se puede continuar más tarde: la siguiente consulta del mismo día sigue desde donde quedó, sin esperar el límite entre ejecuciones.
-- El botón **Apagar consultas / Encender consultas**: interruptor de este equipo. Apagado, **Consultar ahora** (ni `--forzar`) no sale a la Rama Judicial. Sirve cuando varias personas consultan desde la misma red: el portal cuenta todo lo que sale de una misma IP, así que conviene que solo un equipo consulte a la vez. No detiene una consulta que ya esté en curso (para eso, **Cancelar**). Queda en `datosjustes.json`; si ese archivo falta, las consultas están encendidas.
+- El botón **Apagar consultas / Encender consultas**: interruptor de este equipo. Apagado, **Consultar ahora** (ni `--forzar`) no sale a la Rama Judicial. Sirve cuando varias personas consultan desde la misma red: el portal cuenta todo lo que sale de una misma IP, así que conviene que solo un equipo consulte a la vez. No detiene una consulta que ya esté en curso (para eso, **Cancelar**). Queda en `datos\ajustes.json`; si ese archivo falta, las consultas están encendidas.
 
 - Un campo **días** que hace dos cosas: (1) en un radicado que se consulta por primera vez, lo registrado en esos últimos días sale como POSIBLE NOVEDAD, y lo más antiguo queda como referencia; rige desde la siguiente consulta; (2) define qué alertas van en la pestaña **Por decidir** (ver abajo), y eso rige de inmediato. Por defecto 7; 0 no avisa nada en radicados nuevos y deja en Por decidir solo lo detectado hoy. Se guarda al salir del campo o con Enter y queda en `datos\ajustes.json`. Si ese archivo existe, manda sobre `[primera_consulta]` de `config.toml`.
 
@@ -124,11 +124,23 @@ En el reporte, los radicados afectados aparecen como NO VERIFICADO, con el motiv
 Mientras tanto, vuelva a la consulta manual en el portal de la Rama Judicial y no confíe en los resultados de ese ciclo.
 Avise a quien mantiene la herramienta para que la ajuste.
 
-## Si el portal bloquea las consultas
+## Si el portal falla, se cae o bloquea las consultas (protocolo)
 
-Si el portal de la Rama Judicial recibe muchas consultas seguidas, puede bloquearlas por un rato. En ese caso la herramienta se detiene de inmediato y muestra el mensaje "ALERTA: el portal bloqueó las consultas".
-El reporte de Excel trae lo consultado hasta ese momento, y en la hoja Resumen aparece cuántos radicados quedaron pendientes ("Pendientes por consultar"). El ciclo queda como "Pausado: el portal bloqueó las consultas".
-No hace falta hacer nada más que esperar el tiempo que indica el mensaje (30 minutos por defecto) y volver a lanzar la herramienta. Continuará sola desde donde quedó, sin repetir lo ya consultado.
+**Lo que la herramienta hace sola, sin que nadie intervenga:**
+
+- **Cuota del portal (HTTP 403 o 429).** El portal corta después de unas 60 a 70 peticiones. La herramienta espera 1, 2 y 4 minutos y sigue. Es normal y pasa en casi todos los ciclos. Cada espera queda anotada en `reportes\avisos.log` ("El portal pidió esperar").
+- **Portal caído (errores 502 o 503, sin conexión, sin respuesta).** Si fallan 5 consultas seguidas, o más de la mitad del ciclo, espera 15 minutos y reintenta lo que falló. Si sigue igual, espera 30 minutos más y reintenta otra vez. La ventana muestra "Sin avance hace N min" mientras espera: no hay que cerrarla.
+- **Radicado que el portal no encuentra.** No cuenta como caída del portal. Sale como NO VERIFICADO con el motivo "... revisar el radicado en el portal".
+
+Si después de eso el portal sigue sin responder, o el bloqueo no se levanta, la herramienta se rinde. El ciclo queda **"Pausado: el portal no responde"** o **"Pausado: el portal bloqueó las consultas"**, y la ventana lo dice en rojo. El reporte trae lo consultado hasta ese momento, y la hoja Resumen dice cuántos radicados quedaron pendientes.
+
+**Lo que hace la persona que consulta:**
+
+1. Esperar 1 hora y volver a lanzar **Consultar ahora**. La herramienta sigue desde donde quedó, sin repetir lo ya consultado. Debe ser el mismo día: al día siguiente el ciclo pausado queda como Interrumpido y la consulta empieza de cero.
+2. Si vuelve a pausarse, hacer ese día la consulta manual en el portal de la Rama Judicial de los radicados que no aparecen en el reporte, y avisar a Luis Fajardo.
+3. Si un radicado sale con "revisar el radicado en el portal" en varios ciclos seguidos, buscarlo a mano en el portal. Si el número está mal, corregirlo en el Excel de radicados.
+
+Lo que hoy pasa con datos reales: el 14-oct el portal estuvo caído unos 35 minutos, y el 26-oct casi todo el día.
 
 ## Limitaciones conocidas
 
