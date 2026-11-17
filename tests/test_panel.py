@@ -1,11 +1,19 @@
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from consultor.bloqueo import Bloqueo
 from consultor.models import SIN_CAMBIO, Radicado, Veredicto
 from consultor.panel import (
     Avance,
+    ConfigAlertas,
+    accion_al_cerrar,
+    config_alertas,
+    contar_para_regla,
+    evaluar_obligacion,
+    separar,
+    texto_dias_guardado,
+    texto_pestana_rango,
     leer_avance,
     resumen_ultimo_ciclo,
     solicitar_cancelacion,
@@ -87,3 +95,53 @@ def test_textos_para_la_ventana():
     assert "2026-10-12 09:02" in t and "1 consultados" in t and "0 posibles novedades" in t
     assert "Consultando" in texto_avance(leer_avance_falso(5, 44, 10))
     assert "sin avance" in texto_avance(leer_avance_falso(5, 44, 200)).lower()
+
+
+HOY = date(2026, 11, 17)
+
+
+def _p(*dias_atras):
+    return [{"id": i, "detectada": f"{HOY - timedelta(days=d)}T08:00:00"} for i, d in enumerate(dias_atras)]
+
+
+def test_separar_frontera_inclusiva():
+    en, ant = separar(_p(0, 7, 8), HOY, 7)
+    assert [x["id"] for x in en] == [0, 1] and [x["id"] for x in ant] == [2]
+
+
+def test_separar_con_cero_dias_deja_solo_hoy():
+    en, ant = separar(_p(0, 1), HOY, 0)
+    assert [x["id"] for x in en] == [0] and [x["id"] for x in ant] == [1]
+
+
+def test_evaluar_obligacion_se_activa_sobre_30_y_se_libera_bajo_10():
+    c = ConfigAlertas(exigir=True)
+    assert evaluar_obligacion(False, 30, c) is False
+    assert evaluar_obligacion(False, 31, c) is True
+    assert evaluar_obligacion(True, 10, c) is True
+    assert evaluar_obligacion(True, 9, c) is False
+    assert evaluar_obligacion(True, 50, ConfigAlertas(exigir=False)) is False
+
+
+def test_la_regla_usa_su_propio_corte_y_no_el_campo_dias():
+    p = _p(*([20] * 31))
+    assert contar_para_regla(p, HOY, ConfigAlertas(exigir=True, dias_corte=7)) == 31
+
+
+def test_accion_al_cerrar():
+    c = ConfigAlertas(exigir=True)
+    assert accion_al_cerrar(True, 44, 3, 7, c).tipo == "bloquear"
+    assert "Faltan 35." in accion_al_cerrar(True, 44, 3, 7, c).texto
+    a = accion_al_cerrar(False, 0, 3, 7, c)
+    assert a.tipo == "preguntar" and a.texto == "Quedan 3 alertas por decidir de los últimos 7 días. ¿Cerrar de todas formas?"
+    assert accion_al_cerrar(False, 0, 0, 7, c).tipo == "cerrar"
+
+
+def test_config_alertas_por_defecto_apagada():
+    assert config_alertas({}) == ConfigAlertas(False, 30, 10, 7)
+
+
+def test_textos_de_pestanas_y_guardado():
+    assert texto_pestana_rango(7, 5) == "Por decidir · últimos 7 días (5)"
+    assert texto_pestana_rango(0, 2) == "Por decidir · hoy (2)"
+    assert texto_dias_guardado(0).startswith("Guardado: 0 días. No se avisará nada")

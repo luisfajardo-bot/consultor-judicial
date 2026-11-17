@@ -93,6 +93,29 @@ WHERE a.estado = 'Pendiente' AND a.ciclo_id <> ?
 ORDER BY a.id
 """
 
+ALERTAS_PENDIENTES_SQL = """
+SELECT a.id, a.radicado, a.ciclo_id,
+       COALESCE(c.hora, ci.inicio) AS detectada,
+       t.fecha_actuacion, t.actuacion, t.anotacion,
+       COALESCE(NULLIF(c.despacho, ''), r.despacho, '') AS despacho
+FROM alerta a
+JOIN actuacion t ON t.id_reg_actuacion = a.id_reg_actuacion
+JOIN radicado r ON r.radicado = a.radicado
+JOIN ciclo ci ON ci.id = a.ciclo_id
+LEFT JOIN consulta c ON c.ciclo_id = a.ciclo_id AND c.radicado = a.radicado
+WHERE a.estado = 'Pendiente'
+ORDER BY detectada DESC, a.id DESC
+"""
+
+ALERTAS_DECIDIDAS_SQL = """
+SELECT a.id, a.radicado, a.estado, a.validada_por, a.validada_en,
+       t.fecha_actuacion, t.actuacion
+FROM alerta a
+JOIN actuacion t ON t.id_reg_actuacion = a.id_reg_actuacion
+WHERE a.estado <> 'Pendiente' {filtro}
+ORDER BY a.validada_en DESC, a.id DESC
+"""
+
 
 def _iso(momento: datetime) -> str:
     return momento.isoformat(timespec="seconds")
@@ -513,3 +536,13 @@ class Store:
                 }
             )
         return filas
+
+    def alertas_pendientes(self) -> list[dict]:
+        return [dict(f) for f in self.con.execute(ALERTAS_PENDIENTES_SQL)]
+
+    def alertas_decididas(self, estado: str | None = None) -> list[dict]:
+        if estado is None:
+            filas = self.con.execute(ALERTAS_DECIDIDAS_SQL.format(filtro=""))
+        else:
+            filas = self.con.execute(ALERTAS_DECIDIDAS_SQL.format(filtro="AND a.estado = ?"), (estado,))
+        return [dict(f) for f in filas]

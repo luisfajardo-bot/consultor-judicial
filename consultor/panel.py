@@ -3,10 +3,11 @@
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .bloqueo import ciclo_en_curso
+from .models import CONFIRMADA
 
 ESTADO_RE = re.compile(r"(\d{1,2}:\d{2})\s*\|\s*(\d+) de (\d+)")
 SIN_AVANCE_SEG = 90
@@ -89,3 +90,97 @@ def texto_avance(a: Avance) -> str:
     if a.segundos_sin_avance > SIN_AVANCE_SEG:
         t += f" Sin avance hace {int(a.segundos_sin_avance // 60)} min: el portal puede estar pidiendo esperar."
     return t
+
+
+@dataclass(frozen=True)
+class ConfigAlertas:
+    exigir: bool = False
+    umbral: int = 30
+    objetivo: int = 10
+    dias_corte: int = 7
+
+
+def config_alertas(cfg: dict) -> ConfigAlertas:
+    a = cfg.get("alertas", {})
+    base = ConfigAlertas()
+    return ConfigAlertas(
+        exigir=a.get("exigir_puesta_al_dia", base.exigir),
+        umbral=a.get("umbral_anteriores", base.umbral),
+        objetivo=a.get("objetivo_anteriores", base.objetivo),
+        dias_corte=a.get("dias_corte_regla", base.dias_corte),
+    )
+
+
+def separar(pendientes: list[dict], hoy: date, dias: int) -> tuple[list[dict], list[dict]]:
+    desde = hoy - timedelta(days=dias)
+    en_rango, anteriores = [], []
+    for p in pendientes:
+        (en_rango if date.fromisoformat(p["detectada"][:10]) >= desde else anteriores).append(p)
+    return en_rango, anteriores
+
+
+def contar_para_regla(pendientes: list[dict], hoy: date, c: ConfigAlertas) -> int:
+    return len(separar(pendientes, hoy, c.dias_corte)[1])
+
+
+def evaluar_obligacion(activa: bool, anteriores: int, c: ConfigAlertas) -> bool:
+    if not c.exigir:
+        return False
+    if anteriores > c.umbral:
+        return True
+    if anteriores < c.objetivo:
+        return False
+    return activa
+
+
+@dataclass(frozen=True)
+class AccionCierre:
+    tipo: str  # "bloquear", "preguntar" o "cerrar"
+    texto: str = ""
+
+
+def accion_al_cerrar(
+    obligacion: bool, anteriores_regla: int, en_rango: int, dias: int, c: ConfigAlertas
+) -> AccionCierre:
+    if obligacion:
+        return AccionCierre("bloquear", texto_obligacion(anteriores_regla, c))
+    if en_rango > 0:
+        return AccionCierre(
+            "preguntar",
+            f"Quedan {en_rango} alertas por decidir de los últimos {dias} días. ¿Cerrar de todas formas?",
+        )
+    return AccionCierre("cerrar")
+
+
+def texto_pestana_rango(dias: int, n: int) -> str:
+    if dias == 0:
+        return f"Por decidir · hoy ({n})"
+    return f"Por decidir · últimos {dias} días ({n})"
+
+
+def texto_pestana_anteriores(n: int) -> str:
+    return f"Anteriores sin decidir ({n})"
+
+
+def texto_obligacion(n: int, c: ConfigAlertas) -> str:
+    return (
+        f"Hay {n} alertas anteriores sin decidir (detectadas hace más de {c.dias_corte} días). "
+        f"Deben quedar menos de {c.objetivo} antes de cerrar. Faltan {n - c.objetivo + 1}."
+    )
+
+
+def texto_dias_guardado(dias: int) -> str:
+    if dias == 0:
+        return (
+            "Guardado: 0 días. No se avisará nada en radicados nuevos; "
+            "Por decidir muestra solo lo detectado hoy."
+        )
+    return (
+        f"Guardado: {dias} días. La pestaña Por decidir ya muestra los últimos {dias} días; "
+        "en radicados nuevos rige desde la próxima consulta."
+    )
+
+
+def texto_confirmar_bloque(estado: str, n: int) -> str:
+    verbo = "Confirmar" if estado == CONFIRMADA else "Descartar"
+    return f"¿{verbo} {n} alertas? Se puede corregir desde Ver decididas."

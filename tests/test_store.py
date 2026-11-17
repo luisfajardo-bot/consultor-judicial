@@ -486,3 +486,26 @@ def test_obligacion_se_guarda_y_por_defecto_es_falsa(store):
     assert store.obligacion_activa() is False
     store.fijar_obligacion(True);  assert store.obligacion_activa() is True
     store.fijar_obligacion(False); assert store.obligacion_activa() is False
+
+
+def test_alertas_pendientes_trae_fecha_de_deteccion_y_excluye_decididas(store):
+    (a, b) = _dos_alertas(store)
+    store.decidir([b], DESCARTADA, "Alisson", AHORA)
+    p = store.alertas_pendientes()
+    assert [x["id"] for x in p] == [a]
+    assert p[0]["detectada"].startswith(AHORA.date().isoformat())
+
+
+def test_alerta_sin_consulta_de_origen_usa_el_inicio_del_ciclo(store):
+    (a, _) = _dos_alertas(store)
+    store.con.execute("DELETE FROM consulta")
+    store.con.commit()
+    assert {x["id"] for x in store.alertas_pendientes()} >= {a}
+
+
+def test_alertas_decididas_filtra_por_estado(store):
+    (a, b) = _dos_alertas(store)
+    store.decidir([a], CONFIRMADA, "Alisson", AHORA)
+    store.decidir([b], DESCARTADA, "Alisson", AHORA)
+    assert [x["id"] for x in store.alertas_decididas(CONFIRMADA)] == [a]
+    assert len(store.alertas_decididas()) == 2
